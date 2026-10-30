@@ -1,40 +1,37 @@
-# Build & test verification report
+# Build & test verification (actual results)
 
-Environment: Linux container, Node 22.22.0, npm 10.9.4, Next 16.4.3, React 19.3.1, TypeScript 5.9.3, Tailwind 4.3.3, Chromium (Playwright) headless.
-Date: 2026-10-30.
+Environment: Linux container, Node 22.22, npm 10.9, Next 16.4.3, React 19.3.1, TypeScript 5.9.3, `@supabase/realtime-js` 2.118, Chromium (Playwright) headless. Date 2026-10-30. Branch `claude/finalize-atm-live`.
 
-## Automated results (actually run)
+## Automated (all run, all pass)
 
-| Check | Result |
-|---|---|
-| `npm install` | OK, 0 vulnerabilities |
-| `npx tsc --noEmit` (strict + noUncheckedIndexedAccess) | PASS, 0 errors |
-| `npm run build` (Next production build) | PASS; routes `/`, `/control`, `/overlay` prerendered static |
-| `npm test` (node:test) | PASS 14/14 |
+| Check | Command | Result |
+|---|---|---|
+| TypeScript (strict, `noUncheckedIndexedAccess`) app + listener | `npm run typecheck` | PASS |
+| Lint (eslint + next config) | `npm run lint` | PASS, 0 problems |
+| Unit + integration | `npm test` | PASS **54/54** |
+| Production build | `npm run build` | PASS (`/`, `/control`, `/overlay` static) |
+| Clean-clone build (no `listener/node_modules`, `npm ci`) | simulated Vercel install | PASS |
+| Browser E2E (headless Chromium, 2 production builds) | `node e2e/run.cjs` | PASS **46/46** |
 
-Unit/integration tests cover: viewer join sequence + sound order; gift small multi-note; gift large bundle + premium sound; multiple queued events sequential, no overlap, none lost, gift jumps ahead of waiting joins; duplicate processed once (also after completion); watchdog recovery from hung audio; queue recovery from storage after reload; community FIFO, gift-priority, hybrid ordering.
+### What the 54 tests cover
+Queue ordering for all 3 modes; hybrid N-gifts and T-seconds rules; overflow eviction + hard cap; **20 000-event stress** (bounded, no id twice, no accepted gift lost); duplicate protection (also after completion); sequential transactions, no overlap; gift arriving mid-animation waits; 60-event burst in order; audio rejecting/hanging doesn't stop transactions; watchdog (aborted once, never started twice); reload recovery (pending resume, "take your cash" not repeated, stale discarded, `stop()` re-queues); input sanitizing (bad avatar schemes, control chars, ids, clamps); protocol validation (version/type/size); env config (service_role/secret keys refused); room code; redaction; TikTok payload mapping (join dedupe, gift diamonds → small/large, streak paid once, hostile payloads); outbox (retry, ack, pacing, expiry); ingest rate limit; BroadcastChannel transport (rooms isolated, garbage ignored); **real `@supabase/realtime-js` against a local Phoenix-protocol server**: broadcast both ways, server drop → reconnect, server unreachable at start → recovers.
 
-## Browser E2E on production build (`next start`, headless Chromium, iPad 820×1180 portrait and 1180×820 landscape viewports)
+### What the 46 E2E checks cover
+Audio activation (5/5 samples), sequential audio test, mute; join = exactly 1 note, small = 3–6, large = ONE bundle labelled Rp 1.000.000 + VIRTUAL; no notes leak between transactions; burst, duplicate blocking, 30-event stress, clear; mode/policy UI; same-browser overlay routing with ack; reload mid-queue (processed exactly 2, none twice); offline (no internet) local operation; no horizontal overflow on iPad portrait/landscape and 390 px phone; overlay fits 540×960, iPad portrait/landscape, 1080×1920, phone; overlay transparent; `?clean=1`; audio file 500 + corrupt file → degraded, transaction still completes, no JS error; **cross-context (isolated storage, no BroadcastChannel) control↔overlay via realtime link**: connect, event animates in overlay, status mirrored, mute propagates, other room sees nothing, **outage during a gift → link reconnects, gift delivered exactly once**; **real listener process** launched against an unreachable TikTok target: shows honest `connecting`, never `connected`, logs contain no secrets; zero console/page errors.
 
-| Test | Result |
-|---|---|
-| Audio activation → "Audio Active", 4/4 samples loaded | PASS |
-| Audio Test plays sounds sequentially (a "playing" state observed) | PASS |
-| Viewer Join completes (processed counter) | PASS |
-| Gift Small completes | PASS |
-| Gift Large completes | PASS |
-| Burst ×6 queued (waiting = 6), all 6 processed exactly once | PASS |
-| Duplicate resend ×2 → "Duplicates blocked" = 2, nothing re-run | PASS |
-| `/overlay` detected by `/control`; event routed via BroadcastChannel and processed there | PASS |
-| `/overlay` computed backgrounds all transparent (`rgba(0,0,0,0)`) | PASS |
-| No horizontal overflow portrait / landscape | PASS |
-| No console errors, page errors, failed requests or HTTP ≥ 400 | PASS |
+## Bugs found by these tests and fixed
+1. Vercel build failed: `listener/` was type-checked without its dependency → excluded from the root tsconfig, own `listener/tsconfig.json` (found on the first Preview deployment).
+2. Corrupt audio file caused an uncaught promise rejection (E2E).
+3. `/control` overflowed horizontally on a 390 px phone (E2E).
+4. Earlier unit-test round: transaction lost on `stop()`; reload could repeat a finished transaction (see `AUDIT.md`).
 
-Screenshots were reviewed by the author for layout (ATM body, screen, keypad, card reader, slot, notes, bundle).
+## NOT verified (PENDING EXTERNAL VALIDATION)
+- Real iPad / iPadOS Safari; PRISM Live Studio (transparency, widget audio capture, autoplay, WebSockets).
+- **Audio audibility, ATM realism, A/V sync by ear** (the agent cannot listen; sounds are synthesized placeholders).
+- Real Supabase project (auth, quotas, rate limits, public-channel setting).
+- TikTok listener against a real LIVE (join/gift payloads, signing server, protocol drift).
+- Viewer-audible audio in the actual broadcast.
+- Vercel Preview/Production runtime behaviour (see status below).
+- Long-running (hours) stability and performance on iPad hardware.
 
-## NOT verified
-
-- Real iPad / iPad Safari (only emulated viewport in Chromium). See `IPAD_TEST_CHECKLIST.md`.
-- **Actual sound output / audibility / sync feel**: headless run proves the playback pipeline ran, not that it sounds good. Sounds are synthesized placeholders.
-- **PRISM Live Studio**: transparency, audio capture, autoplay behavior: untested.
-- iOS silent-switch behavior, long-run performance on iPad hardware.
+See `MANUAL_TESTS.md` for the checklist.

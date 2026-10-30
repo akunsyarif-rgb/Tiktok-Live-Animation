@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p listener/tsconfig.json",
     "audio:generate": "node scripts/generate-audio.mjs",
     "test": "node --experimental-strip-types --test --test-timeout=60000 tests/*.test.ts",
     "lint": "eslint .",
