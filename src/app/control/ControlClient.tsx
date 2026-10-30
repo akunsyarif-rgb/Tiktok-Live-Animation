@@ -3,24 +3,27 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AtmStage } from "../../components/atm/AtmStage.tsx";
 import { StageScaler } from "../../components/atm/StageScaler.tsx";
-import { openBus, type Bus, type OverlayStatus } from "../../lib/bus.ts";
 import { createEvent, EVENT_LABEL, type AtmEvent, type AtmEventType } from "../../lib/events.ts";
-import type { QueueMode } from "../../lib/queue.ts";
+import { DEFAULT_POLICY, type QueueMode } from "../../lib/queue.ts";
+import { Outbox } from "../../lib/outbox.ts";
+import { generateRoom } from "../../lib/config.ts";
+import type { ListenerStatus, Msg, OverlayStatus, Settings } from "../../lib/protocol.ts";
 import { SOUND_IDS } from "../../lib/audio/manifest.ts";
-import { useAtm } from "../../lib/useAtm.ts";
+import { loadPrefs, savePrefs, useAtm } from "../../lib/useAtm.ts";
+import { REMOTE, resolveRoom, saveRoom, useLink } from "../../lib/useLink.ts";
 
-const MODES: { id: QueueMode; label: string; help: string }[] = [
-  { id: "community", label: "Community", help: "Strict first-come-first-served. Gifts get no priority." },
-  { id: "gift-priority", label: "Gift Priority", help: "Waiting gifts always go before waiting viewer joins." },
-  { id: "hybrid", label: "Hybrid", help: "Gifts first, but a waiting viewer join is served after every 3 gifts in a row." },
+const MODES: { id: QueueMode; label: string }[] = [
+  { id: "community", label: "Community" },
+  { id: "gift-priority", label: "Gift Priority" },
+  { id: "hybrid", label: "Hybrid" },
 ];
 
-const HEARTBEAT_MS = 2000;
-const STALE_MS = 6000;
+const HEARTBEAT_MS = 5000;
+const STALE_MS = 15000;
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-white/10 bg-[#1d2125] p-4">
+    <section className="min-w-0 rounded-xl border border-white/10 bg-[#1d2125] p-4">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[#8fd7a6]">{title}</h2>
       {children}
     </section>
@@ -28,37 +31,79 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 }
 
 const btn = "min-h-14 rounded-lg px-4 text-base font-semibold active:scale-[.98] disabled:opacity-40";
+const small = "rounded bg-[#3a4047] px-3 py-2 text-sm";
+
+function policyText(mode: QueueMode, burst: number, waitMs: number): string {
+  if (mode === "community") return "Strict first-come-first-served. Gifts get no priority.";
+  if (mode === "gift-priority") return "Waiting gifts always go before waiting viewer joins. Joins can wait a long time while gifts keep coming.";
+  return `Gifts go first, but a waiting viewer join is never starved: it goes next after ${burst} gift(s) in a row, or once it has waited ${Math.round(waitMs / 1000)} s, whichever comes first.`;
+}
+
+const LISTENER_COLOR: Record<string, string> = { connected: "text-green-400", connecting: "text-yellow-300", reconnecting: "text-yellow-300", offline: "text-orange-300", error: "text-red-400", idle: "text-white/60" };
 
 export function ControlClient() {
-  const { controller, audio } = useAtm("preview");
+  const { controller, audio, diag } = useAtm("preview");
   const local = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const localAudio = useSyncExternalStore(audio.subscribe, audio.getSnapshot, audio.getSnapshot);
+  const logs = useSyncExternalStore(diag.subscribe, diag.getSnapshot, diag.getSnapshot);
 
-  const [mode, setMode] = useState<QueueMode>("hybrid");
-  const [volume, setVolume] = useState(0.8);
+  const [settings, setSettings] = useState<Settings>({ mode: "hybrid", hybridGiftBurst: DEFAULT_POLICY.hybridGiftBurst, hybridMaxJoinWaitMs: DEFAULT_POLICY.hybridMaxJoinWaitMs, volume: 0.8, muted: false });
   const [route, setRoute] = useState<"auto" | "local">("auto");
+  const [room, setRoom] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [showRoom, setShowRoom] = useState(false);
+  const [roomInput, setRoomInput] = useState("");
   const [overlay, setOverlay] = useState<{ status: OverlayStatus; seenAt: number } | null>(null);
+  const [listener, setListener] = useState<{ status: ListenerStatus; seenAt: number } | null>(null);
   const [now, setNow] = useState(0);
   const [log, setLog] = useState<string[]>([]);
-  const busRef = useRef<Bus | null>(null);
+  const [copied, setCopied] = useState("");
+  const outboxRef = useRef<Outbox | null>(null);
   const lastEvent = useRef<AtmEvent | null>(null);
   const wasConnected = useRef(false);
-  const modeRef = useRef(mode);
-  const volumeRef = useRef(volume);
-  modeRef.current = mode;
-  volumeRef.current = volume;
+  const settingsRef = useRef(settings);
+  const sendRef = useRef<(m: Msg) => boolean>(() => false);
 
-  const overlayConnected = overlay !== null && now - overlay.seenAt < STALE_MS;
-  const useOverlay = route === "auto" && overlayConnected;
+  const addLog = useCallback((line: string) => setLog((l) => [line, ...l].slice(0, 8)), []);
 
   useEffect(() => {
-    const bus = openBus((m) => {
-      if (m.t === "status") setOverlay({ status: m.status, seenAt: Date.now() });
-    });
-    busRef.current = bus;
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    // browser-only state (localStorage / URL) can only be read after hydration
+    /* eslint-disable react-hooks/set-state-in-effect */
+    const p = loadPrefs();
+    setSettings((s) => ({ ...s, volume: p.volume, muted: p.muted }));
+    setRoom(resolveRoom(true));
+    setReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
+  const link = useLink(room, ready, diag, (m, via) => {
+    if (m.t === "status") setOverlay({ status: m.status, seenAt: Date.now() });
+    else if (m.t === "listener") setListener({ status: m.status, seenAt: Date.now() });
+    else if (m.t === "ack") outboxRef.current?.ack(m.id, m.result);
+    else if (m.t === "event" && m.from !== "control") addLog(`← ${via} ${m.from}: ${EVENT_LABEL[m.event.type]} @${m.event.username} [${m.event.source ?? "?"}]`);
+  });
+  useEffect(() => {
+    sendRef.current = link.send;
+  }, [link.send]);
+
+  useEffect(() => {
+    const ob = new Outbox({ from: "control", send: (m) => sendRef.current(m), log: diag.add });
+    outboxRef.current = ob;
+    return () => {
+      ob.stop();
+      outboxRef.current = null;
+    };
+  }, [diag]);
+
+  useEffect(() => {
+    if (!ready) return;
     const tick = () => {
       setNow(Date.now());
-      bus?.post({ t: "ping" });
+      sendRef.current({ v: 1, t: "ping", from: "control" });
     };
     tick();
     const hb = setInterval(tick, HEARTBEAT_MS);
@@ -66,64 +111,77 @@ export function ControlClient() {
     return () => {
       clearInterval(hb);
       clearInterval(clock);
-      bus?.close();
-      busRef.current = null;
     };
+  }, [ready]);
+
+  const overlayConnected = overlay !== null && now - overlay.seenAt < STALE_MS;
+  const listenerSeen = listener !== null && now - listener.seenAt < STALE_MS;
+  const useOverlay = route === "auto" && overlayConnected;
+
+  const pushSettings = useCallback((s: Settings) => {
+    sendRef.current({ v: 1, t: "settings", settings: s });
   }, []);
 
-  // a freshly connected overlay does not know the current mode/volume
+  // a freshly (re)connected overlay does not know the current settings
   useEffect(() => {
-    if (overlayConnected && !wasConnected.current) {
-      busRef.current?.post({ t: "mode", mode: modeRef.current });
-      busRef.current?.post({ t: "volume", volume: volumeRef.current });
-    }
+    if (overlayConnected && !wasConnected.current) pushSettings(settingsRef.current);
     wasConnected.current = overlayConnected;
-  }, [overlayConnected]);
+  }, [overlayConnected, pushSettings]);
 
-  const addLog = useCallback((line: string) => setLog((l) => [line, ...l].slice(0, 6)), []);
+  const update = (patch: Partial<Settings>) => {
+    const s = { ...settingsRef.current, ...patch };
+    setSettings(s);
+    controller.setMode(s.mode);
+    controller.setPolicy({ hybridGiftBurst: s.hybridGiftBurst, hybridMaxJoinWaitMs: s.hybridMaxJoinWaitMs });
+    audio.setVolume(s.volume);
+    audio.setMuted(s.muted);
+    savePrefs({ volume: s.volume, muted: s.muted });
+    pushSettings(s);
+  };
 
   const dispatch = useCallback(
     (ev: AtmEvent) => {
       lastEvent.current = ev;
       if (useOverlay) {
-        busRef.current?.post({ t: "event", event: ev });
-        addLog(`→ overlay: ${EVENT_LABEL[ev.type]} @${ev.username}`);
+        outboxRef.current?.submit(ev);
+        addLog(`→ overlay: ${EVENT_LABEL[ev.type]} @${ev.username} [simulator]`);
       } else {
-        const res = controller.enqueue(ev);
-        addLog(`${res}: ${EVENT_LABEL[ev.type]} @${ev.username}`);
+        addLog(`${controller.enqueue(ev)}: ${EVENT_LABEL[ev.type]} @${ev.username} [simulator, preview]`);
       }
     },
     [useOverlay, controller, addLog],
   );
 
   const send = (t: AtmEventType) => dispatch(createEvent(t));
-
-  const resendDuplicate = () => {
-    const ev = lastEvent.current;
-    if (!ev) return addLog("nothing to duplicate yet");
-    dispatch(ev);
-  };
-
-  const burst = () => {
-    (["VIEWER_JOIN", "VIEWER_JOIN", "GIFT_SMALL", "VIEWER_JOIN", "GIFT_LARGE", "GIFT_SMALL"] as const).forEach(send);
-  };
-
-  const changeMode = (m: QueueMode) => {
-    setMode(m);
-    controller.setMode(m);
-    busRef.current?.post({ t: "mode", mode: m });
-  };
-
-  const changeVolume = (v: number) => {
-    setVolume(v);
-    audio.setVolume(v);
-    busRef.current?.post({ t: "volume", volume: v });
-  };
-
+  const resendDuplicate = () => (lastEvent.current ? dispatch(lastEvent.current) : addLog("nothing to duplicate yet"));
+  const burst = () => (["VIEWER_JOIN", "VIEWER_JOIN", "GIFT_SMALL", "VIEWER_JOIN", "GIFT_LARGE", "GIFT_SMALL"] as const).forEach(send);
   const clearQueue = () => {
     controller.clearPending();
-    busRef.current?.post({ t: "clear" });
+    sendRef.current({ v: 1, t: "clear" });
   };
+
+  const copy = async (what: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(what);
+    } catch {
+      setCopied("copy blocked: select the text manually");
+    }
+    setTimeout(() => setCopied(""), 2500);
+  };
+
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const overlayUrl = room ? `${origin}/overlay?room=${room}&clean=1` : `${origin}/overlay?clean=1`;
+  const diagText = () =>
+    diag.toText(
+      [
+        `ATM diagnostics ${new Date().toISOString()}`,
+        `ua: ${navigator.userAgent}`,
+        `remote: ${REMOTE.ok ? link.remote : `disabled (${REMOTE.reason})`} local: ${link.local} room: ${room ? room.slice(0, 4) + "…" : "none"}`,
+        `audio: ${localAudio.state} failures:${localAudio.failures} lastError:${localAudio.lastError ?? "-"}`,
+        `overlay: ${overlayConnected ? "connected" : "not detected"} listener: ${listenerSeen ? listener?.status.state : "not detected"}`,
+      ].join("\n"),
+    );
 
   const view = useOverlay && overlay ? overlay.status.atm : local;
   const loaded = SOUND_IDS.filter((id) => localAudio.assets[id] === "buffer" || localAudio.assets[id] === "element").length;
@@ -132,44 +190,61 @@ export function ControlClient() {
 
   return (
     <main className="control-bg min-h-dvh p-4 md:p-6">
-      <h1 className="mb-1 text-xl font-bold">ATM Control — Phase 0 simulator</h1>
-      <p className="mb-4 text-sm text-white/60">Local simulation only. No TikTok connection. Virtual entertainment currency.</p>
+      <h1 className="mb-1 text-xl font-bold">ATM Control</h1>
+      <p className="mb-4 text-sm text-white/60">Virtual entertainment currency. Events can be simulated here or come from the optional TikTok listener.</p>
 
-      <div className="grid gap-4 md:grid-cols-[1fr_300px]">
-        <div className="grid gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid min-w-0 gap-4">
           <Panel title="Audio">
             <div className="flex flex-wrap items-center gap-3">
               <button className={`${btn} bg-[#2f7d4a] text-white`} onClick={() => void audio.activate()} disabled={audioActive}>
                 {audioActive ? "Audio Active ✓" : "Activate Audio"}
               </button>
               <button className={`${btn} bg-[#3a4047]`} onClick={() => void audio.test()} disabled={!audioActive}>Audio Test</button>
+              <button className={`${btn} ${settings.muted ? "bg-[#a33] text-white" : "bg-[#3a4047]"}`} aria-pressed={settings.muted} onClick={() => update({ muted: !settings.muted })}>
+                {settings.muted ? "Muted" : "Mute"}
+              </button>
               <label className="flex min-w-60 flex-1 items-center gap-3 text-sm">
-                Master volume
-                <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => changeVolume(Number(e.target.value))} className="h-10 flex-1" aria-label="Master volume" />
-                <span className="w-10 text-right tabular-nums">{Math.round(volume * 100)}%</span>
+                Volume
+                <input type="range" min={0} max={1} step={0.01} value={settings.volume} onChange={(e) => update({ volume: Number(e.target.value) })} className="h-10 flex-1" aria-label="Master volume" />
+                <span className="w-10 text-right tabular-nums">{Math.round(settings.volume * 100)}%</span>
               </label>
             </div>
             <p className="mt-3 text-xs text-white/60">
-              Sounds are original synthesized placeholders (not real ATM recordings). iPad: turn off the silent switch; Web Audio is muted by it.
-              The overlay page needs its own audio activation (tap the hint on /overlay).
+              Sounds are original synthesized placeholders, not real ATM recordings. Volume/mute apply to this page and to the overlay.
+              The overlay needs its own audio start (it tries automatically; otherwise tap the hint there). iPad silent switch mutes Web Audio.
             </p>
           </Panel>
 
           <Panel title="Queue mode">
             <div className="grid gap-2 sm:grid-cols-3">
               {MODES.map((m) => (
-                <button key={m.id} onClick={() => changeMode(m.id)} aria-pressed={mode === m.id}
-                  className={`${btn} ${mode === m.id ? "bg-[#2f7d4a] text-white" : "bg-[#3a4047]"}`}>{m.label}</button>
+                <button key={m.id} onClick={() => update({ mode: m.id })} aria-pressed={settings.mode === m.id}
+                  className={`${btn} ${settings.mode === m.id ? "bg-[#2f7d4a] text-white" : "bg-[#3a4047]"}`}>{m.label}</button>
               ))}
             </div>
-            <p className="mt-2 text-xs text-white/60">{MODES.find((m) => m.id === mode)?.help}</p>
+            <p className="mt-2 text-xs text-white/70">{policyText(settings.mode, settings.hybridGiftBurst, settings.hybridMaxJoinWaitMs)}</p>
+            {settings.mode === "hybrid" && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="flex items-center justify-between gap-2 text-sm">Join turn after N gifts
+                  <input type="number" min={1} max={20} value={settings.hybridGiftBurst} aria-label="Hybrid gift burst"
+                    onChange={(e) => update({ hybridGiftBurst: Math.min(20, Math.max(1, Number(e.target.value) || 1)) })}
+                    className="h-11 w-20 rounded bg-[#2a2f34] px-2 text-right" />
+                </label>
+                <label className="flex items-center justify-between gap-2 text-sm">Max join wait (seconds)
+                  <input type="number" min={3} max={300} value={Math.round(settings.hybridMaxJoinWaitMs / 1000)} aria-label="Hybrid max join wait seconds"
+                    onChange={(e) => update({ hybridMaxJoinWaitMs: Math.min(300, Math.max(3, Number(e.target.value) || 3)) * 1000 })}
+                    className="h-11 w-20 rounded bg-[#2a2f34] px-2 text-right" />
+                </label>
+              </div>
+            )}
           </Panel>
 
-          <Panel title="Simulate events">
+          <Panel title="Simulate events (not TikTok)">
             <div className="grid gap-2 sm:grid-cols-3">
               <button className={`${btn} bg-[#2d5f8a] text-white`} onClick={() => send("VIEWER_JOIN")}>Viewer Join<br /><span className="text-xs font-normal">1 note</span></button>
               <button className={`${btn} bg-[#8a6a2d] text-white`} onClick={() => send("GIFT_SMALL")}>Gift Small<br /><span className="text-xs font-normal">several notes</span></button>
-              <button className={`${btn} bg-[#8a2d4a] text-white`} onClick={() => send("GIFT_LARGE")}>Gift Large<br /><span className="text-xs font-normal">cash bundle</span></button>
+              <button className={`${btn} bg-[#8a2d4a] text-white`} onClick={() => send("GIFT_LARGE")}>Gift Large<br /><span className="text-xs font-normal">bundle of 10</span></button>
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               <button className={`${btn} bg-[#3a4047]`} onClick={burst}>Burst ×6 (mixed)</button>
@@ -177,7 +252,7 @@ export function ControlClient() {
               <button className={`${btn} bg-[#4a2f2f]`} onClick={clearQueue}>Clear waiting queue</button>
             </div>
             <ul className="mt-3 space-y-1 text-xs text-white/70" aria-label="Activity log">
-              {log.length === 0 ? <li>No events sent yet.</li> : log.map((l, i) => <li key={i}>{l}</li>)}
+              {log.length === 0 ? <li>No events yet.</li> : log.map((l, i) => <li key={i}>{l}</li>)}
             </ul>
           </Panel>
 
@@ -187,7 +262,8 @@ export function ControlClient() {
               <dt className="text-white/60">Waiting</dt><dd data-testid="waiting">{view.waitingTotal}</dd>
               <dt className="text-white/60">Processed</dt><dd data-testid="processed">{view.processed}</dd>
               <dt className="text-white/60">Duplicates blocked</dt><dd data-testid="duplicates">{view.duplicates}</dd>
-              <dt className="text-white/60">Recovered</dt><dd>{view.recovered}</dd>
+              <dt className="text-white/60">Dropped (queue full)</dt><dd data-testid="dropped">{view.dropped}</dd>
+              <dt className="text-white/60">Watchdog recoveries</dt><dd>{view.recovered}</dd>
               <dt className="text-white/60">Mode</dt><dd>{view.mode}</dd>
             </dl>
             <div className="mt-2 text-sm">Now: {view.current ? `${EVENT_LABEL[view.current.type]} — @${view.current.username}` : "idle"}</div>
@@ -197,22 +273,60 @@ export function ControlClient() {
             </ol>
           </Panel>
 
-          <Panel title="System status">
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-              <dt className="text-white/60">This page audio</dt><dd>{localAudio.state}{audioActive && localAudio.playing ? ` · playing ${localAudio.playing}` : ""}</dd>
-              <dt className="text-white/60">Samples</dt>
-              <dd>{audioActive ? `${loaded}/${SOUND_IDS.length} loaded${missing.length ? ` · MISSING: ${missing.join(", ")} (oscillator fallback)` : ""}` : "not loaded (activate audio)"}</dd>
+          <Panel title="Connections">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
               <dt className="text-white/60">Overlay page</dt>
-              <dd>{overlayConnected ? `connected · audio ${overlay?.status.audio.state}` : "not detected (open /overlay in this browser)"}</dd>
+              <dd data-testid="overlay-status">{overlayConnected ? `connected · audio ${overlay?.status.audio.state}${overlay?.status.audio.muted ? " (muted)" : ""}` : "not detected"}</dd>
               <dt className="text-white/60">Event route</dt>
               <dd>
-                {useOverlay ? "→ overlay" : "→ this page (preview)"}{" "}
-                <button className="ml-2 rounded bg-[#3a4047] px-3 py-1" onClick={() => setRoute(route === "auto" ? "local" : "auto")}>
-                  {route === "auto" ? "Force preview" : "Auto"}
-                </button>
+                {useOverlay ? "→ overlay (acknowledged delivery)" : "→ this page (preview)"}{" "}
+                <button className={`ml-2 ${small}`} onClick={() => setRoute(route === "auto" ? "local" : "auto")}>{route === "auto" ? "Force preview" : "Auto"}</button>
               </dd>
-              <dt className="text-white/60">Event source</dt><dd>local simulator (no TikTok)</dd>
+              <dt className="text-white/60">Same-browser link</dt><dd>{link.local}</dd>
+              <dt className="text-white/60">Cross-device link</dt>
+              <dd data-testid="remote-status">{REMOTE.ok ? link.remote : `disabled — ${REMOTE.reason}`}</dd>
+              <dt className="text-white/60">TikTok listener</dt>
+              <dd data-testid="listener-status">
+                {listenerSeen && listener ? (
+                  <span className={LISTENER_COLOR[listener.status.state]}>
+                    {listener.status.state} @{listener.status.target} · sent {listener.status.sent} · undelivered {listener.status.undelivered}
+                    {listener.status.detail ? ` · ${listener.status.detail}` : ""}
+                  </span>
+                ) : "not running / not detected (real events: NOT active)"}
+              </dd>
             </dl>
+            <div className="mt-3 space-y-2 text-sm">
+              <div className="text-white/60">Room code (secret, links this control to your overlay and listener)</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="rounded bg-black/40 px-2 py-2 text-xs break-all" data-testid="room">{room ? (showRoom ? room : `${room.slice(0, 4)}${"•".repeat(12)}`) : "none"}</code>
+                <button className={small} onClick={() => setShowRoom(!showRoom)}>{showRoom ? "Hide" : "Show"}</button>
+                <button className={small} onClick={() => room && void copy("overlay URL copied", overlayUrl)}>Copy overlay URL</button>
+                <button className={small} onClick={() => room && void copy("room copied", room)}>Copy room</button>
+                <button className={small} onClick={() => { const r = generateRoom(); saveRoom(r); setRoom(r); addLog("new room code generated: update overlay URL + listener"); }}>New room</button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input value={roomInput} onChange={(e) => setRoomInput(e.target.value.trim())} placeholder="paste existing room code" aria-label="Room code input" className="h-11 flex-1 rounded bg-[#2a2f34] px-2 text-xs" />
+                <button className={small} onClick={() => { if (saveRoom(roomInput)) { setRoom(roomInput); setRoomInput(""); } else addLog("invalid room code (16-64 chars A-Z a-z 0-9 _ -)"); }}>Use</button>
+              </div>
+              {copied && <div className="text-xs text-green-400">{copied}</div>}
+            </div>
+          </Panel>
+
+          <Panel title="System status & diagnostics">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-white/60">This page audio</dt>
+              <dd>{localAudio.state}{localAudio.muted ? " · muted" : ""}{audioActive && localAudio.playing ? ` · playing ${localAudio.playing}` : ""}</dd>
+              <dt className="text-white/60">Samples</dt>
+              <dd data-testid="samples">{audioActive ? `${loaded}/${SOUND_IDS.length} loaded${missing.length ? ` · MISSING: ${missing.join(", ")} (fallback tone)` : ""}` : "not loaded (activate audio)"}</dd>
+              <dt className="text-white/60">Audio failures</dt><dd>{localAudio.failures}{localAudio.lastError ? ` · ${localAudio.lastError}` : ""}</dd>
+              <dt className="text-white/60">Event source</dt><dd>{listenerSeen ? "TikTok listener (unofficial) + simulator" : "simulator only"}</dd>
+            </dl>
+            <div className="mt-3 flex gap-2">
+              <button className={small} onClick={() => void copy("diagnostics copied (secrets redacted)", diagText())}>Copy diagnostics</button>
+            </div>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-2 text-[11px] leading-snug text-white/70" aria-label="Diagnostics log">
+              {logs.length === 0 ? "no entries" : logs.slice(-40).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.level} ${l.msg}`).join("\n")}
+            </pre>
           </Panel>
         </div>
 

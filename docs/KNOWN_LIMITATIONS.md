@@ -1,14 +1,18 @@
-# Known limitations (Phase 0)
+# Known limitations
 
-1. **Audio is placeholder.** Synthesized, not real ATM recordings. See `AUDIO_ASSETS.md`.
-2. **PRISM Live Studio is unverified.** Transparency, audio capture and widget autoplay behavior inside PRISM have not been tested in a real broadcast.
-3. **Control ↔ overlay link is same-browser only** (`BroadcastChannel`). If PRISM loads `/overlay` in its own web view, Safari's `/control` cannot drive it. A server relay is a later-phase concern (out of scope: no backend in Phase 0). Control falls back to its own live preview.
-4. **Overlay audio needs a user tap** (browser autoplay policy). In a PRISM widget with no touch, audio may never activate; untested.
-5. **iOS silent switch** mutes Web Audio output.
-6. **Dispense animation is front-view**: notes slide down out of the slot into a tray (no 3D perspective).
-7. Animation/sound sync is time-aligned at phase start (not frame-locked); drift from audio decode latency of ~tens of ms is possible.
-8. Queue persistence uses `sessionStorage` (cleared when the tab closes). Persistence is best-effort.
-9. Keypad, soft keys and card reader are decorative (not interactive).
-10. Events are simulated; avatars always use the local initials fallback in the simulator (remote avatar URLs + error fallback are implemented but unexercised by the simulator).
-11. Banknotes are original, rupiah-inspired designs, labeled virtual/not legal tender. They are not copies of real notes.
-12. No lint setup was added (kept dependencies minimal).
+1. **Audio is synthesized, not recorded.** The 5 WAV files are original placeholders. The agent cannot listen; it verified playback mechanics, not realism. See `AUDIO_ASSETS.md`.
+2. **PRISM unverified.** Transparency, widget audio capture, autoplay, WebSocket support in the widget are untested.
+3. **Viewer-audible audio depends on PRISM**, not on this app.
+4. **TikTok integration is unofficial and unverified against a real LIVE.** It may break whenever TikTok changes its protocol; it relies on a third-party signing service; library license is AGPL-3.0. Needs an always-on Node host (not Vercel, not an iPad alone).
+5. **Real Supabase untested.** The realtime client was tested against a local server implementing the same wire protocol (join, heartbeat, broadcast, drop/reconnect). Auth, quotas, rate limits and "public channel" settings of the real service were not exercised.
+6. **Room code = password.** Anyone with Supabase URL + anon key + room code can send events to / read status from your room. There is no per-user authentication (by design for Phase 1 simplicity). Rotate with "New room".
+7. **Delivery is not durable.** Events sent while no overlay is open expire (join 20 s, gift 120 s). Queue persistence is `localStorage` on the overlay device only (≤ 10 min old).
+8. **Watchdog-aborted transactions are not retried** (to guarantee no double payout) → counted in "Watchdog recoveries".
+9. **Overload sheds viewer joins** (oldest first) above 100 waiting; gifts are kept up to 500.
+10. A transaction interrupted by a reload while still dispensing is re-run once (at-least-once for in-flight work).
+11. Web Audio is muted by the iPad silent switch; iOS may suspend audio on calls/backgrounding.
+12. Front-view dispenser animation (notes slide down out of the slot); not 3D.
+13. Same-browser link needs both tabs in the same browser profile.
+14. Keypad / soft keys / card reader are decorative.
+15. Banknotes are original, rupiah-inspired, labelled "UANG HIBURAN VIRTUAL / NOT LEGAL TENDER". Using real-looking currency imagery in streams can still carry legal/platform risk; review before monetizing.
+16. Vercel treats the repository's default branch as Production; at the time of writing a feature branch was that default (see `DEPLOYMENT_VERCEL.md`).

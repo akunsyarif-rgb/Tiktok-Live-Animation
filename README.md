@@ -1,56 +1,70 @@
-# TikTok Live Animation — Phase 0: ATM visual & audio prototype
+# TikTok Live ATM Interactive
 
-Frontend-only prototype. A virtual ATM dispenses **virtual entertainment banknotes** (rupiah-inspired, labeled "UANG HIBURAN VIRTUAL — BUKAN ALAT PEMBAYARAN YANG SAH") when simulated viewers join or send gifts. No TikTok connection, no backend, no database.
+ATM virtual untuk siaran TikTok LIVE: penonton masuk → 1 lembar uang virtual keluar; gift kecil → beberapa lembar; gift besar → 1 bundel 10 lembar. Semua uang adalah **mata uang virtual untuk hiburan** (berlabel "UANG HIBURAN VIRTUAL — BUKAN ALAT PEMBAYARAN YANG SAH"), bukan uang resmi.
 
-Stack: Next.js 16 (App Router), React 19, TypeScript (strict), Tailwind CSS 4, CSS animations, inline SVG, Web Audio API + HTML Audio fallback.
+**Status: siap diuji di LIVE, belum "100% selesai".** Yang terbukti lewat tes otomatis dan yang MASIH menunggu validasi perangkat/akun nyata dipisahkan jelas di [`docs/BUILD_VERIFICATION.md`](docs/BUILD_VERIFICATION.md) dan [`docs/MANUAL_TESTS.md`](docs/MANUAL_TESTS.md).
 
-## Run
+## Halaman
+
+| Alamat | Fungsi |
+|---|---|
+| `/control` | Dasbor kontrol (Safari iPad): audio, mode antrean, simulator event, status koneksi, diagnostik |
+| `/overlay` | ATM transparan 9:16 untuk **PRISM Web widget**. Parameter: `?room=KODE` (tautan lintas perangkat), `&clean=1` (sembunyikan tombol suara), `&debug=1` (HUD diagnostik), `&bg=dark|checker` (latar uji) |
+
+## Cara kerja singkat
+
+1. Buka `/control` → salin **Overlay URL** (berisi kode room rahasia).
+2. Tempel URL itu ke PRISM sebagai sumber **Web**. Overlay muncul "connected" di `/control`.
+3. Event datang dari **simulator** (tombol di `/control`) atau dari **listener TikTok** (opsional, tidak resmi, jalan di komputer/server sendiri).
+4. Event diproses **satu per satu**: proses → uang keluar → "silakan ambil uang" → standby. Tidak pernah ada animasi bertabrakan, event ganda diblokir, antrean selamat dari reload.
+
+Mode antrean: **Community** (urut kedatangan), **Gift Priority** (gift dulu), **Hybrid** (gift dulu, tetapi viewer join dijamin giliran setelah N gift berturut-turut atau T detik; N dan T bisa diatur). Detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Instalasi lokal
 
 ```bash
 npm install
-npm run dev                  # http://localhost:3000
-# iPad on same Wi-Fi:
-npm run dev -- -H 0.0.0.0    # open http://<computer-ip>:3000
-# production
-npm run build && npm start
+npm run dev            # http://localhost:3000/control
+npm run verify         # typecheck + lint + test + build
+npm run e2e            # tes browser (butuh `npm run build` dulu dan Playwright terpasang)
 ```
 
-Scripts: `npm run typecheck`, `npm test` (queue/controller tests), `npm run audio:generate` (regenerates placeholder WAVs).
+Tanpa konfigurasi apa pun, aplikasi jalan dengan tautan **satu browser** (dua tab Safari). Untuk PRISM (konteks berbeda dari Safari) wajib tautan lintas perangkat → isi dua variabel lingkungan di bawah.
 
-## Pages
+## Environment variables
 
-| Route | Purpose |
+| Variabel | Dimana | Rahasia? | Fungsi |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Vercel/lokal (build) | publik | URL proyek Supabase |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Vercel/lokal (build) | publik (anon/publishable) | Kunci anon. **Kunci `service_role`/`sb_secret_` ditolak aplikasi.** |
+| `TIKTOK_USERNAME`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ATM_ROOM` | listener | **jaga privat** | Konfigurasi listener TikTok |
+| `EULER_API_KEY`, `ATM_LARGE_GIFT_DIAMONDS`, `ATM_MAX_JOINS_PER_MIN` | listener (opsional) | kunci = rahasia | lihat `.env.example` |
+
+Kode **room** (dibuat otomatis di `/control`) adalah "kata sandi" antara control, overlay, dan listener. Jangan tampilkan di layar siaran.
+
+## Dokumentasi
+
+| Dokumen | Isi |
 |---|---|
-| `/control` | Dashboard: mode, volume, **Activate Audio**, Audio Test, Viewer Join / Gift Small / Gift Large simulators, burst + duplicate test, queue and system status, live preview |
-| `/overlay` | Transparent portrait 9:16 ATM for PRISM Web Widget. `?clean=1` hides the sound hint, `?bg=dark` / `?bg=checker` preview backdrops |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | arsitektur, jaminan pengiriman, kebijakan antrean, model keamanan |
+| [DEPLOYMENT_VERCEL](docs/DEPLOYMENT_VERCEL.md) | deploy, env, Supabase, branch produksi |
+| [PRISM](docs/PRISM.md) | menghubungkan PRISM, masalah audio untuk penonton |
+| [TIKTOK_LIVE](docs/TIKTOK_LIVE.md) | listener TikTok: risiko, lisensi, cara jalan |
+| [AUDIO_ASSETS](docs/AUDIO_ASSETS.md) | daftar suara, cara mengganti, pengujian audio |
+| [OPERATIONS](docs/OPERATIONS.md) | **checklist sebelum/sesudah LIVE**, prosedur pemulihan, diagnostik |
+| [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | masalah umum |
+| [KNOWN_LIMITATIONS](docs/KNOWN_LIMITATIONS.md) | keterbatasan |
+| [MANUAL_TESTS](docs/MANUAL_TESTS.md) | tes yang harus Anda lakukan (PENDING EXTERNAL VALIDATION) |
+| [AUDIT](docs/AUDIT.md) | temuan audit + perbaikan |
+| [BUILD_VERIFICATION](docs/BUILD_VERIFICATION.md) | hasil tes aktual |
 
-Open `/control` and `/overlay` in two tabs of the **same browser**: Control detects the overlay (BroadcastChannel) and routes events to it. If no overlay is open, Control animates its own preview, so one page is enough to test. Audio must be activated separately on each page that should make sound (browser rule).
-
-## Behavior
-
-- Viewer Join → 1 note. Gift Small → 3–6 notes. Gift Large → strapped bundle of 10 notes (Rp 1.000.000 virtual).
-- Each transaction: processing (processing sound) → dispensing (cash sound + animation) → "take your cash" → standby. Strictly sequential; an active transaction is never interrupted.
-- Modes: **Community** (FIFO), **Gift Priority** (gifts before waiting joins), **Hybrid** (default; gifts first, but a waiting join is served after 3 gifts in a row).
-- Duplicate event ids are rejected (also after processing). Pending queue is mirrored to `sessionStorage` and resumes after reload. A 30 s watchdog aborts a stuck transaction and continues.
-- Audio: explicit activation, separate processing / cash / gift / premium sounds, master volume, sequential non-overlapping playback, missing files degrade gracefully (HTMLAudio → oscillator beep).
-
-## Layout
+## Struktur
 
 ```
-src/lib/        events, dispense plan, EventQueue, AtmController, bus, audio/ (manifest, AudioEngine)
-src/components/atm/  ATMBody ATMScreen ATMKeypad CardReader CashSlot Banknote SingleNoteAnimation CashBundleAnimation TransactionDisplay (+ Avatar, AtmStage, StageScaler)
-src/app/        /, /control, /overlay
-public/audio/   4 WAV placeholders     scripts/generate-audio.mjs     tests/
-docs/           AUDIO_ASSETS.md  IPAD_TEST_CHECKLIST.md  KNOWN_LIMITATIONS.md  BUILD_VERIFICATION.md
+src/lib/          logika (queue, controller, audio, transport, protocol, outbox, …)
+src/components/atm/  komponen visual ATM
+src/app/          /control  /overlay
+listener/         listener TikTok (opsional, Node ≥ 22, bukan untuk Vercel)
+public/audio/     5 file WAV (placeholder sintetis, bukan rekaman ATM asli)
+tests/  e2e/      tes unit/integrasi dan tes browser
 ```
-
-## Docs
-
-- [Audio asset manifest](docs/AUDIO_ASSETS.md) — **sounds are synthesized placeholders, not real ATM recordings**
-- [Manual iPad checklist](docs/IPAD_TEST_CHECKLIST.md)
-- [Known limitations](docs/KNOWN_LIMITATIONS.md)
-- [Build verification report](docs/BUILD_VERIFICATION.md)
-
-## Out of scope (later phases)
-
-TikTok connector/APIs, Supabase/database, auth, multi-account, paid APIs, deployment.
