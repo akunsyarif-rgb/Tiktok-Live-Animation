@@ -53,3 +53,27 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 @media (prefers-reduced-motion: reduce) {
   .blink, .led-pulse, .slot-active, .keypad-active .atm-key { animation: none; }
 }
+
+.theme-stage{position:relative;width:540px;height:960px;overflow:hidden;color:#eaf4f2;background:#071316;font-family:Arial,sans-serif}
+.theme-stage header{position:absolute;top:36px;left:32px;right:32px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:3px;color:#a3bfbb}
+.theme-stage header i{width:8px;height:8px;border-radius:50%;background:#83ffcb;box-shadow:0 0 16px #83ffcb}
+.reactor-theme{background:radial-gradient(ellipse at 50% 43%,#174d49,#0b2028 46%,#071316 78%)}
+.reactor-orbit{position:absolute;left:105px;top:260px;width:330px;height:330px;border:2px solid #5fe4bd66;border-radius:50%;box-shadow:0 0 30px #44dcb333}
+.orbit-a{transform:rotate(35deg) scaleY(.68);border-style:dashed;animation:theme-spin 22s linear infinite}
+.orbit-b{transform:rotate(-35deg) scaleY(.68);border-color:#70b9ff66;animation:theme-spin 28s linear infinite reverse}
+.reactor-core{position:absolute;left:180px;top:345px;width:180px;height:180px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:radial-gradient(circle at 35% 30%,#d8fff3,#36c49d 18%,#07534c 62%,#061b22);border:7px solid #8cf2d1;box-shadow:0 0 35px #4be5ba,0 0 100px #28bd9b55,inset 0 0 25px #b9ffea}
+.reactor-core small{font-size:10px;letter-spacing:3px}.reactor-core b{font-size:13px;letter-spacing:2px}.reactor-active{animation:theme-pulse .55s ease-in-out infinite alternate}
+.marble-theme{background:radial-gradient(ellipse at 50% 40%,#29434b,#101e27 62%,#071117)}
+.marble-rail{position:absolute;border:9px solid #8cb5bd88;border-radius:48%;box-shadow:0 0 22px #8ad6e122}
+.rail-a{left:110px;top:180px;width:310px;height:440px;transform:rotate(17deg);border-left-color:#d9b57e}
+.rail-b{left:160px;top:230px;width:210px;height:340px;transform:rotate(-19deg);border-right-color:#d9b57e}
+.marble-gear{position:absolute;border:10px dashed #d7b27b;border-radius:50%;box-shadow:0 0 22px #d7b27b33}
+.gear-a{left:52px;top:315px;width:105px;height:105px;animation:theme-spin 20s linear infinite}
+.gear-b{right:54px;top:455px;width:75px;height:75px;animation:theme-spin 13s linear infinite reverse}
+.marble-ball{position:absolute;left:255px;top:215px;width:27px;height:27px;border-radius:50%;background:radial-gradient(circle at 30% 25%,#fff,#f0c17d 35%,#86512c);box-shadow:0 0 20px #ffc77a}
+.marble-running{animation:marble-route 3.8s ease-in-out infinite}
+.theme-message{position:absolute;left:28px;right:28px;bottom:125px;min-height:130px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;border-block:1px solid #a4d8ce44;background:linear-gradient(90deg,transparent,#183638bb,transparent)}
+.theme-message small{font-size:10px;letter-spacing:4px;color:#9adbc8}.theme-message strong{font-size:25px;letter-spacing:1px;color:#f4fff9}.theme-message span{font-size:10px;letter-spacing:2px;color:#a2bab6}
+.theme-stage footer{position:absolute;bottom:35px;width:100%;text-align:center;font-size:9px;letter-spacing:2px;color:#72908c}
+@keyframes theme-spin{to{transform:rotate(360deg)}}@keyframes theme-pulse{to{filter:brightness(1.65);transform:scale(1.04)}}@keyframes marble-route{0%{transform:translate(0,0)}25%{transform:translate(105px,100px)}50%{transform:translate(35px,260px)}75%{transform:translate(-115px,155px)}100%{transform:translate(0,0)}}
+@media(prefers-reduced-motion:reduce){.theme-stage *{animation:none!important}}
