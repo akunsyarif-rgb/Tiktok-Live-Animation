@@ -47,6 +47,8 @@ export class ThreeHost {
   private status: GlStatus = "ok";
   private lostCount = 0;
   private lostAt: number[] = [];
+  /** getExtension() returns null on a lost context, so the handle is kept from creation (test hook only) */
+  private loseExt: WEBGL_lose_context | null = null;
 
   constructor(private o: HostOptions) {
     const canvas = document.createElement("canvas");
@@ -69,6 +71,7 @@ export class ThreeHost {
     this.ro.observe(o.container);
     this.resize();
     const gl = this.renderer.getContext();
+    this.loseExt = gl.getExtension("WEBGL_lose_context");
     const ext = gl.getExtension("WEBGL_debug_renderer_info");
     visualStats.set({ webgl: "ok", renderer: ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)).slice(0, 60) : "n/a", quality: this.quality });
     this.raf = requestAnimationFrame(this.frame);
@@ -199,10 +202,10 @@ export class ThreeHost {
 
   /** Test hook: force a context loss/restore round trip. */
   loseContextForTest(): void {
-    this.renderer.getContext().getExtension("WEBGL_lose_context")?.loseContext();
+    this.loseExt?.loseContext();
   }
   restoreContextForTest(): void {
-    this.renderer.getContext().getExtension("WEBGL_lose_context")?.restoreContext();
+    this.loseExt?.restoreContext();
   }
 
   dispose(): void {
