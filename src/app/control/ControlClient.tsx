@@ -332,8 +332,7 @@ export function ControlClient() {
               <button className={small} onClick={() => void copy("diagnostics copied (secrets redacted)", diagText())}>Copy diagnostics</button>
             </div>
             <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-2 text-[11px] leading-snug text-white/70" aria-label="Diagnostics log">
-              {logs.length === 0 ? "no entries" : logs.slice(-40).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.level} ${l.msg}`).join("
-")}
+              {logs.length === 0 ? "no entries" : logs.slice(-40).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.level} ${l.msg}`).join("\n")}
             </pre>
           </Panel>
         </div>
