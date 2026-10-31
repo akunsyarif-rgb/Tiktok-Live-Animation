@@ -180,8 +180,7 @@ export function ControlClient() {
         `remote: ${REMOTE.ok ? link.remote : `disabled (${REMOTE.reason})`} local: ${link.local} room: ${room ? room.slice(0, 4) + "…" : "none"}`,
         `audio: ${localAudio.state} failures:${localAudio.failures} lastError:${localAudio.lastError ?? "-"}`,
         `overlay: ${overlayConnected ? "connected" : "not detected"} listener: ${listenerSeen ? listener?.status.state : "not detected"}`,
-      ].join("
-"),
+      ].join("\n"),
     );
 
   const view = useOverlay && overlay ? overlay.status.atm : local;
