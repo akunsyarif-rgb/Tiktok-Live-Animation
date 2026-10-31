@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AtmStage } from "../../components/atm/AtmStage.tsx";
+import { ThemeStage } from "../../components/themes/ThemeStage.tsx";
 import { StageScaler } from "../../components/atm/StageScaler.tsx";
 import { createEvent, EVENT_LABEL, type AtmEvent, type AtmEventType } from "../../lib/events.ts";
 import { DEFAULT_POLICY, type QueueMode } from "../../lib/queue.ts";
@@ -47,7 +47,7 @@ export function ControlClient() {
   const localAudio = useSyncExternalStore(audio.subscribe, audio.getSnapshot, audio.getSnapshot);
   const logs = useSyncExternalStore(diag.subscribe, diag.getSnapshot, diag.getSnapshot);
 
-  const [settings, setSettings] = useState<Settings>({ mode: "hybrid", hybridGiftBurst: DEFAULT_POLICY.hybridGiftBurst, hybridMaxJoinWaitMs: DEFAULT_POLICY.hybridMaxJoinWaitMs, volume: 0.8, muted: false });
+  const [settings, setSettings] = useState<Settings>({ theme: "atm", mode: "hybrid", hybridGiftBurst: DEFAULT_POLICY.hybridGiftBurst, hybridMaxJoinWaitMs: DEFAULT_POLICY.hybridMaxJoinWaitMs, volume: 0.8, muted: false });
   const [route, setRoute] = useState<"auto" | "local">("auto");
   const [room, setRoom] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -171,7 +171,7 @@ export function ControlClient() {
   };
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const overlayUrl = room ? `${origin}/overlay?room=${room}&clean=1` : `${origin}/overlay?clean=1`;
+  const overlayUrl = room ? `${origin}/overlay?room=${room}&clean=1&theme=${settings.theme}` : `${origin}/overlay?clean=1&theme=${settings.theme}`;
   const diagText = () =>
     diag.toText(
       [
@@ -195,7 +195,7 @@ export function ControlClient() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid min-w-0 gap-4">
-          <Panel title="Audio">
+          <Panel title="Visual theme">\n            <div className="grid grid-cols-3 gap-2">\n              {([{id:"atm",label:"ATM"},{id:"reactor",label:"Energy Reactor"},{id:"marble",label:"Marble Machine"}] as {id:ThemeId;label:string}[]).map((t) => <button key={t.id} onClick={() => update({ theme: t.id })} aria-pressed={settings.theme === t.id} className={`${btn} ${settings.theme === t.id ? "bg-[#2f7d4a] text-white" : "bg-[#3a4047]"}`}>{t.label}</button>)}\n            </div>\n            <p className="mt-2 text-xs text-white/60">Tema diterapkan ke preview dan overlay yang terhubung.</p>\n          </Panel>\n\n          <Panel title="Audio">
             <div className="flex flex-wrap items-center gap-3">
               <button className={`${btn} bg-[#2f7d4a] text-white`} onClick={() => void audio.activate()} disabled={audioActive}>
                 {audioActive ? "Audio Active ✓" : "Activate Audio"}
@@ -334,7 +334,7 @@ export function ControlClient() {
           <div className="mb-2 text-xs uppercase tracking-wider text-white/60">Preview {useOverlay ? "(idle: events go to overlay)" : "(live)"}</div>
           <div className="aspect-[9/16] w-full rounded-lg bg-[#101418]">
             <StageScaler>
-              <AtmStage controller={controller} />
+              <ThemeStage controller={controller} theme={settings.theme} />
             </StageScaler>
           </div>
         </div>
