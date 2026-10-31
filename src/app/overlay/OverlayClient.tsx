@@ -54,6 +54,7 @@ export function OverlayClient() {
       if (audio.getSnapshot().state !== "active") void audio.autoActivate();
     } else if (m.t === "settings") {
       const s = m.settings;
+      setTheme(s.theme);
       controller.setMode(s.mode);
       controller.setPolicy({ hybridGiftBurst: s.hybridGiftBurst, hybridMaxJoinWaitMs: s.hybridMaxJoinWaitMs });
       audio.setVolume(s.volume);
