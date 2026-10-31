@@ -7,7 +7,7 @@ import { createEvent, EVENT_LABEL, type AtmEvent, type AtmEventType } from "../.
 import { DEFAULT_POLICY, type QueueMode } from "../../lib/queue.ts";
 import { Outbox } from "../../lib/outbox.ts";
 import { generateRoom } from "../../lib/config.ts";
-import type { ListenerStatus, Msg, OverlayStatus, Settings } from "../../lib/protocol.ts";
+import type { ListenerStatus, Msg, OverlayStatus, Settings, ThemeId } from "../../lib/protocol.ts";
 import { SOUND_IDS } from "../../lib/audio/manifest.ts";
 import { loadPrefs, savePrefs, useAtm } from "../../lib/useAtm.ts";
 import { REMOTE, resolveRoom, saveRoom, useLink } from "../../lib/useLink.ts";
