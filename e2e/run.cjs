@@ -38,6 +38,7 @@ async function waitProcessed(page, n, ms = 60000) {
   await page.waitForFunction((n) => parseInt(document.querySelector("[data-testid=processed]")?.textContent ?? "0", 10) >= n, n, { timeout: ms });
 }
 function watchErrors(page, name, sink, ignore = []) {
+  page.on("crash", () => sink.push(`${name} PAGE CRASHED`));
   page.on("console", (m) => { if (m.type() === "error" && !ignore.some((i) => m.text().includes(i))) sink.push(`${name} console: ${m.text()}`); });
   page.on("pageerror", (e) => sink.push(`${name} pageerror: ${e.message}`));
   page.on("response", (r) => { if (r.status() >= 400 && !ignore.some((i) => r.url().includes(i))) sink.push(`${name} http${r.status()}: ${r.url()}`); });
@@ -252,7 +253,11 @@ async function themeSuite(browser) {
   check("debug monitor is OFF unless ?debug=1", await (async () => { const p = await ctx.newPage(); await p.goto(`${base}/overlay?clean=1`); await p.waitForTimeout(500); const n = await p.locator("pre").count(); await p.close(); return n === 0; })());
 
   // --- idle (attract) animation per theme ---
-  const diff = async (page) => { const a = await page.screenshot(); await page.waitForTimeout(1500); const b = await page.screenshot(); return !a.equals(b); };
+  // compare the stage only (the debug HUD text legitimately changes every second)
+  const diff = async (page) => {
+    const el = page.locator("[data-testid=three-stage], [data-testid=atm-body]").first();
+    const a = await el.screenshot(); await page.waitForTimeout(1500); const b = await el.screenshot(); return !a.equals(b);
+  };
   for (const t of ["atm", "reactor", "marble"]) {
     await c.getByTestId(`theme-${t}`).click();
     await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
@@ -311,7 +316,7 @@ async function themeSuite(browser) {
   await c.getByRole("button", { name: /^Gift Big/ }).click(); // while an animation is running
   await c.getByRole("button", { name: /Join ×20/ }).click();
   await c.getByRole("button", { name: /^Gift Special/ }).click();
-  await sleep(500);
+  await c.waitForFunction(() => parseInt(document.querySelector("[data-testid=waiting]")?.textContent ?? "0", 10) >= 15, null, { timeout: 8000 }).catch(() => {});
   const waitingNow = await num(c, "waiting");
   check("stress: long queue builds (5 gifts + big + 20 joins + special)", waitingNow >= 15, "waiting=" + waitingNow);
   await waitStandby(180000);
@@ -503,8 +508,10 @@ async function remoteSuite(browser, phoenix) {
   await waitHttp(`http://127.0.0.1:${PORT_MAIN}/control`);
   const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
   try {
-    await mainSuite(browser);
-    await themeSuite(browser);
+    const only = process.env.E2E_ONLY;
+    if (!only || only === "main") await mainSuite(browser);
+    if (!only || only === "theme") await themeSuite(browser);
+    if (only && only !== "remote") return;
 
     const phoenix = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/phoenix-cli.ts"]);
     await new Promise((resolve) => { const t = setInterval(() => { if (phoenix.out.includes("{")) { clearInterval(t); resolve(); } }, 50); });

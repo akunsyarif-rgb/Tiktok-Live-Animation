@@ -83,7 +83,8 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 .atm-leds[data-mode="work"] { --chase: 1.2s; }
 .atm-leds[data-mode="fast"] { --chase: .6s; }
 .atm-leds[data-mode="fast"] i { background: #f0b34a; }
-.atm-still .atm-leds i, .atm-still .idle-msg { animation: none; }
+.atm-still .atm-leds i, .atm-still .idle-msg, .atm-still .blink { animation: none; }
+.atm-still .blink { opacity: 1; }
 @keyframes idle-cycle { 0% { opacity: 0 } 3% { opacity: 1 } 22% { opacity: 1 } 26% { opacity: 0 } 100% { opacity: 0 } }
 .idle-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; opacity: 0; animation: idle-cycle 16s linear infinite; animation-delay: calc(var(--k) * 4s); }
 .atm-still .idle-msg:first-of-type { opacity: 1; }

@@ -156,7 +156,7 @@ export class ThreeHost {
     if (this.acc < interval - 2) return;
     const dtMs = Math.min(100, this.acc);
     this.acc = this.acc % interval;
-    const dt = dtMs / 1000;
+    const dt = idleFrozen ? 0 : dtMs / 1000; // frozen idle: nothing may advance (scene accumulators use dt)
     if (!idleFrozen) this.clock += dt;
     // frozen idle animation: freeze the idle clock but keep transactions moving
     const t = idleFrozen ? this.frozenClock : (this.frozenClock = this.clock);
