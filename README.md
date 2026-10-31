@@ -4,6 +4,10 @@ ATM virtual untuk siaran TikTok LIVE: penonton masuk → 1 lembar uang virtual k
 
 **Status: siap diuji di LIVE, belum "100% selesai".** Yang terbukti lewat tes otomatis dan yang MASIH menunggu validasi perangkat/akun nyata dipisahkan jelas di [`docs/BUILD_VERIFICATION.md`](docs/BUILD_VERIFICATION.md) dan [`docs/MANUAL_TESTS.md`](docs/MANUAL_TESTS.md).
 
+## Tema (satu event engine, satu antrean, satu protokol)
+
+Pilih di `/control` → **Theme & visuals**: **ATM Machine** · **Energy Reactor** · **Kinetic Marble Machine**. Tema aktif ikut tersinkron ke overlay. Tiap tema punya idle/attract, sambutan viewer (nama asli, grouped welcome bila antrean panjang), dan 5 level gift (Join · Small · Medium · Big · Special) dengan ambang diamond yang bisa diatur. Detail: [`docs/THEMES.md`](docs/THEMES.md). Tes LIVE manual: [`docs/LIVE_TEST_CHECKLIST.md`](docs/LIVE_TEST_CHECKLIST.md). Reactor dan Marble memakai three.js polos (tanpa R3F/physics/postprocessing), tanpa aset CDN, dengan fallback DOM bila WebGL tidak ada.
+
 ## Halaman
 
 | Alamat | Fungsi |
@@ -55,6 +59,9 @@ Kode **room** (dibuat otomatis di `/control`) adalah "kata sandi" antara control
 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | masalah umum |
 | [KNOWN_LIMITATIONS](docs/KNOWN_LIMITATIONS.md) | keterbatasan |
 | [MANUAL_TESTS](docs/MANUAL_TESTS.md) | tes yang harus Anda lakukan (PENDING EXTERNAL VALIDATION) |
+| [THEMES](docs/THEMES.md) | tiga tema, level gift, welcome, idle, teknis, debug monitor |
+| [LIVE_TEST_CHECKLIST](docs/LIVE_TEST_CHECKLIST.md) | checklist uji LIVE malam ini |
+| [ASSET docs](docs/assets/ASSET_CATALOG.md) | riset aset (belum dipakai; semua aset tema ini prosedural) |
 | [AUDIT](docs/AUDIT.md) | temuan audit + perbaikan |
 | [BUILD_VERIFICATION](docs/BUILD_VERIFICATION.md) | hasil tes aktual |
 
@@ -65,6 +72,8 @@ src/lib/          logika (queue, controller, audio, transport, protocol, outbox,
 src/components/atm/  komponen visual ATM
 src/app/          /control  /overlay
 listener/         listener TikTok (opsional, Node ≥ 22, bukan untuk Vercel)
-public/audio/     5 file WAV (placeholder sintetis, bukan rekaman ATM asli)
+public/audio/     14 file WAV (sintetis asli, bukan rekaman)
+src/visual/       mesin three.js: host, reactor, marble, kurva murni
+src/components/themes/  ThemeStage, HUD, fallback
 tests/  e2e/      tes unit/integrasi dan tes browser
 ```

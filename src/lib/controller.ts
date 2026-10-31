@@ -391,7 +391,8 @@ export class AtmController {
   }
 
   private persist(): void {
-    if (!this.storage) return;
+    // before start() the persisted queue has not been restored yet: writing now would erase it
+    if (!this.storage || !this.started) return;
     const data: Persisted = { v: 2, savedAt: this.now(), activePhase: this.snapshot.phase, queue: this.queue.serialize() };
     try {
       this.storage.setItem(this.storageKey, JSON.stringify(data));

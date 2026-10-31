@@ -472,3 +472,20 @@ test("5 gifts back-to-back + big gift during animation + special after a long qu
   assert.equal(a.maxConcurrent(), 1);
   c.stop();
 });
+
+test("REGRESSION: changing settings before start() must not erase the persisted queue (reload keeps pending events)", async () => {
+  const store = memStore();
+  const c1 = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 300 }).player, timing: FAST, storage: store });
+  c1.start();
+  c1.enqueue(mkEvent("VIEWER_JOIN", "keep1"));
+  c1.enqueue(mkEvent("VIEWER_JOIN", "keep2"));
+  await sleep(10);
+  const frozen = memStore();
+  store.m.forEach((v, k) => frozen.m.set(k, v));
+  const c2 = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 1 }).player, timing: FAST, storage: frozen });
+  c2.setVisual({ theme: "reactor" }); // what the page does on mount, BEFORE start()
+  c2.start();
+  await until(() => c2.getSnapshot().processed === 2, 8000);
+  c1.stop();
+  c2.stop();
+});

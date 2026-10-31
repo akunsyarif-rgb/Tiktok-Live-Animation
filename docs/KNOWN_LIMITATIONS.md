@@ -16,3 +16,13 @@
 14. Keypad / soft keys / card reader are decorative.
 15. Banknotes are original, rupiah-inspired, labelled "UANG HIBURAN VIRTUAL / NOT LEGAL TENDER". Using real-looking currency imagery in streams can still carry legal/platform risk; review before monetizing.
 16. Vercel treats the repository's default branch as Production; at the time of writing a feature branch was that default (see `DEPLOYMENT_VERCEL.md`).
+
+## Themes (Reactor / Marble / ATM upgrade)
+17. **Not run on a real iPad / iPhone / PRISM.** All WebGL checks ran in headless Chromium with SwiftShader (software GL, ~4–6 fps): they prove it renders, switches, falls back, recovers from context loss and cleans up, **not** that it holds 30–60 fps on an iPad GPU. Frame rate on device is **NOT VERIFIED**.
+18. **Transparent WebGL inside PRISM is NOT VERIFIED** (alpha channel is correct in Chromium). If PRISM shows a black box, use `?theme=atm` (DOM) or a chroma background.
+19. Visual quality was judged from screenshots only (no live motion review, no sound review by ear). Sounds are synthesized placeholders. Aesthetic tuning (colours, intensities, camera) will need your eyes on a real stream.
+20. ATM **join still dispenses 1 virtual note** (original locked decision) and lasts ~5.5 s; only the new themes use the lighter ~4 s join. Say so if you want a note-less ATM join.
+21. Marble special "route" is a lit back-layer track; marbles are deterministic (no collisions between marbles, no physics). Marble spacing assumes ≥ 30 fps; below that the `live` clock slows (dt clamp 0.1 s) and marbles lag the schedule.
+22. Gift levels depend on `gift.diamonds`. The simulator and listener send the **total** value; events with no value fall back to their type (small=1, large=3). A custom sender must do the same.
+23. `session_id` does not exist in this protocol (the secret **room code** plays that role); event idempotency is the event `id` (unchanged).
+24. Preview-only: the bundle for a 3D theme adds a lazy chunk (three.js) loaded the first time such a theme is selected.
