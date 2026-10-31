@@ -9,6 +9,7 @@ import type { SoundPlayer } from "../src/lib/audio/engine.ts";
 import { startPhoenixServer } from "./phoenix-server.ts";
 import { mkEvent, sleep, until } from "./helpers.ts";
 
+const NOGROUP = { groupWelcomeAt: 50 };
 const silent: SoundPlayer = { play: async () => {}, stop: () => {} };
 const FAST = { processingJoinMs: 5, processingGiftMs: 5, dispenseMinMs: 5, completeHoldMs: 5, gapMs: 0, animScale: 0.001 };
 const hooks = (inbox: Msg[], states: Record<string, LinkState> = {}) => ({
@@ -37,7 +38,7 @@ test("BroadcastChannel transport: delivers within a room, isolates rooms, ignore
 
 test("end-to-end over BroadcastChannel: outbox → ingest → controller → ack; resend after loss is exactly-once", async () => {
   const inbox: Msg[] = [];
-  const ctl = new AtmController({ audio: silent, timing: FAST });
+  const ctl = new AtmController({ visual: NOGROUP, audio: silent, timing: FAST });
   ctl.start();
   const ingest = createIngest({ controller: ctl });
   const overlay = createBroadcastTransport(ROOM, {
@@ -87,7 +88,7 @@ test("outbox paces sends (free-tier rate limit protection)", async () => {
 
 test("ingest: flood protection refuses (and flags) events beyond the rate, accepts again after refill", async () => {
   let t = 0;
-  const ctl = new AtmController({ audio: silent, timing: FAST });
+  const ctl = new AtmController({ visual: NOGROUP, audio: silent, timing: FAST });
   const ing = createIngest({ controller: ctl, ratePerSec: 10, burst: 5, now: () => t });
   const results = Array.from({ length: 8 }, (_, i) => ing(mkEvent("VIEWER_JOIN", `f${i}`)));
   assert.equal(results.filter((r) => r === "accepted").length, 5);

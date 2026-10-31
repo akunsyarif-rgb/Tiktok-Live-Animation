@@ -14,7 +14,7 @@ interface Props {
 /** Slot lip + recessed tray. The tray window clips notes so they appear to emerge from the slot. */
 export const CashSlot = memo(function CashSlot({ active, taking, children }: Props) {
   return (
-    <div style={{ width: TRAY_W + 24, margin: "0 auto" }}>
+    <div className="atm-idle-mech" style={{ width: TRAY_W + 24, margin: "0 auto" }}>
       <div className="atm-panel" style={{ height: 20, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ width: "86%", height: 7, borderRadius: 3, background: "#14171a", position: "relative" }}>
           <div

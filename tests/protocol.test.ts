@@ -25,7 +25,7 @@ test("event with bad id / type / empty name is refused", () => {
   assert.equal(sanitizeEvent({ ...mkEvent("VIEWER_JOIN"), id: "a b" }), null);
   assert.equal(sanitizeEvent({ ...mkEvent("VIEWER_JOIN"), id: "x".repeat(101) }), null);
   assert.equal(sanitizeEvent({ ...mkEvent("VIEWER_JOIN"), type: "HACK" }), null);
-  assert.equal(sanitizeEvent({ ...mkEvent("VIEWER_JOIN"), username: "   " }), null);
+  assert.equal(sanitizeEvent({ ...mkEvent("VIEWER_JOIN"), username: "   " })?.username, "guest", "empty name → safe fallback, event is NOT dropped");
   assert.equal(sanitizeEvent({ ...mkEvent("VIEWER_JOIN"), username: 42 }), null);
 });
 

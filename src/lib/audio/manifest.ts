@@ -1,4 +1,8 @@
-export const SOUND_IDS = ["processing", "cash_dispense", "gift_processing", "premium_dispense", "success"] as const;
+export const SOUND_IDS = [
+  "processing", "cash_dispense", "gift_processing", "premium_dispense", "success",
+  "rx_pulse", "rx_charge", "rx_release", "rx_special", "rx_zap",
+  "mb_launch", "mb_finale", "mb_clack", "mb_bell",
+] as const;
 export type SoundId = (typeof SOUND_IDS)[number];
 
 export interface SoundAsset {
@@ -35,6 +39,15 @@ export const AUDIO_MANIFEST: Record<SoundId, SoundAsset> = {
     realRecording: false,
     license: GEN,
   },
+  rx_pulse: { file: "/audio/rx_pulse.wav", description: "Reactor: soft core pulse (viewer join)", nominalMs: 800, realRecording: false, license: GEN },
+  rx_charge: { file: "/audio/rx_charge.wav", description: "Reactor: charge-up riser (played faster for smaller gifts)", nominalMs: 3200, realRecording: false, license: GEN },
+  rx_release: { file: "/audio/rx_release.wav", description: "Reactor: energy release boom + decay", nominalMs: 3000, realRecording: false, license: GEN },
+  rx_special: { file: "/audio/rx_special.wav", description: "Reactor: special double release", nominalMs: 5600, realRecording: false, license: GEN },
+  rx_zap: { file: "/audio/rx_zap.wav", description: "Reactor: short electric arc (sfx, pitch-varied)", nominalMs: 300, realRecording: false, license: GEN },
+  mb_launch: { file: "/audio/mb_launch.wav", description: "Marble: launcher clack + gear tick", nominalMs: 600, realRecording: false, license: GEN },
+  mb_finale: { file: "/audio/mb_finale.wav", description: "Marble: finale swell + bell chord", nominalMs: 4000, realRecording: false, license: GEN },
+  mb_clack: { file: "/audio/mb_clack.wav", description: "Marble: ball on rail clack (sfx, pitch-varied)", nominalMs: 250, realRecording: false, license: GEN },
+  mb_bell: { file: "/audio/mb_bell.wav", description: "Marble: struck bell bar (sfx, 3 pitches via rate)", nominalMs: 1200, realRecording: false, license: GEN },
   success: {
     file: "/audio/success.wav",
     description: "Transaction approved: two short confirmation beeps",

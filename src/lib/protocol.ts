@@ -1,6 +1,7 @@
 import type { AtmEvent } from "./events.ts";
 import { sanitizeEvent } from "./events.ts";
 import type { QueueMode } from "./queue.ts";
+import { normalizeVisual, type VisualSettings } from "./levels.ts";
 import type { AtmSnapshot } from "./controller.ts";
 import type { AudioSnapshot } from "./audio/engine.ts";
 
@@ -13,6 +14,8 @@ export interface Settings {
   hybridMaxJoinWaitMs: number;
   volume: number;
   muted: boolean;
+  /** theme + visual knobs (optional on the wire for older senders → defaults) */
+  visual: VisualSettings;
 }
 
 export type AckResult = "accepted" | "duplicate" | "invalid" | "dropped" | "rate-limited";
@@ -60,6 +63,7 @@ export function parseSettings(s: unknown): Settings | null {
     hybridMaxJoinWaitMs: clamp(Math.round(o.hybridMaxJoinWaitMs), 3000, 300_000),
     volume: clamp(o.volume, 0, 1),
     muted: o.muted === true,
+    visual: normalizeVisual(o.visual),
   };
 }
 

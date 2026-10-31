@@ -44,38 +44,39 @@ const USERNAMES = [
   "dewi_lestari", "fajar_88", "nurul.hidayah", "agus_wijaya", "maya_sari",
   "doni_kusuma", "lina.marlina", "bayu_aji", "citra_kirana", "eko_prasetyo",
 ];
-const SMALL_GIFTS = [
-  { name: "Rose", diamonds: 1 },
-  { name: "Finger Heart", diamonds: 5 },
-  { name: "Sunglasses", diamonds: 10 },
-];
-const LARGE_GIFTS = [
-  { name: "Lion", diamonds: 29999 },
-  { name: "Universe", diamonds: 34999 },
-  { name: "Diamond Flight", diamonds: 18000 },
-];
+const GIFTS = {
+  small: [{ name: "Rose", unit: 1 }, { name: "Finger Heart", unit: 5 }],
+  medium: [{ name: "Sunglasses", unit: 99 }, { name: "Heart Balloon", unit: 150 }],
+  big: [{ name: "Lion", unit: 1500 }, { name: "Diamond Flight", unit: 4000 }],
+  special: [{ name: "Universe", unit: 34999 }, { name: "Galaxy", unit: 20000 }],
+};
 
 function pick<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)] as T;
 }
 
-export function createEvent(type: AtmEventType): AtmEvent {
+export type SimKind = "join" | "small" | "medium" | "big" | "special";
+
+/** Simulator event. `gift.diamonds` is the TOTAL value (unit × count), same meaning as the TikTok listener. */
+export function createSimEvent(kind: SimKind): AtmEvent {
   const base: AtmEvent = {
     id: uniqueId(),
-    type,
+    type: kind === "join" ? "VIEWER_JOIN" : kind === "small" || kind === "medium" ? "GIFT_SMALL" : "GIFT_LARGE",
     username: pick(USERNAMES),
     avatarUrl: null,
     timestamp: Date.now(),
     source: "simulator",
   };
-  if (type === "GIFT_SMALL") {
-    const g = pick(SMALL_GIFTS);
-    base.gift = { name: g.name, count: 1 + Math.floor(Math.random() * 5), diamonds: g.diamonds };
-  } else if (type === "GIFT_LARGE") {
-    const g = pick(LARGE_GIFTS);
-    base.gift = { name: g.name, count: 1, diamonds: g.diamonds };
+  if (kind !== "join") {
+    const g = pick(GIFTS[kind]);
+    const count = kind === "small" ? 1 + Math.floor(Math.random() * 5) : 1;
+    base.gift = { name: g.name, count, diamonds: g.unit * count };
   }
   return base;
+}
+
+export function createEvent(type: AtmEventType): AtmEvent {
+  return createSimEvent(type === "VIEWER_JOIN" ? "join" : type === "GIFT_SMALL" ? "small" : "big");
 }
 
 const ID_RE = /^[A-Za-z0-9:_.\-]{1,100}$/;
@@ -103,8 +104,8 @@ export function sanitizeEvent(e: unknown): AtmEvent | null {
   if (typeof o.id !== "string" || !ID_RE.test(o.id)) return null;
   if (o.type !== "VIEWER_JOIN" && o.type !== "GIFT_SMALL" && o.type !== "GIFT_LARGE") return null;
   if (typeof o.username !== "string") return null;
-  const username = cleanText(o.username, MAX_NAME);
-  if (!username) return null;
+  // anonymous / empty names still get welcomed: safe fallback instead of dropping the event
+  const username = cleanText(o.username, MAX_NAME) || "guest";
   const ts = typeof o.timestamp === "number" && Number.isFinite(o.timestamp) ? o.timestamp : Date.now();
   const out: AtmEvent = {
     id: o.id,

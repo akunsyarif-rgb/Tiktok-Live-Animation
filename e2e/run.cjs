@@ -59,7 +59,7 @@ async function mainSuite(browser) {
   check("remote link reported as disabled when env not configured", (await tid(c, "remote-status")).startsWith("disabled"));
   await c.getByRole("button", { name: "Activate Audio" }).click();
   await c.waitForTimeout(1200);
-  check("audio activation → 5/5 samples loaded", /5\/5 loaded/.test(await tid(c, "samples")), await tid(c, "samples"));
+  check("audio activation → 14/14 samples loaded", /14\/14 loaded/.test(await tid(c, "samples")), await tid(c, "samples"));
   await c.getByRole("button", { name: "Audio Test" }).click();
   await c.waitForTimeout(600);
   check("audio test plays sequentially (playing state seen)", (await c.locator("main").innerText()).includes("playing "));
@@ -87,12 +87,12 @@ async function mainSuite(browser) {
   check("gift small dispenses several notes (3-6)", nSmall >= 3 && nSmall <= 6, `notes=${nSmall}`);
   await waitProcessed(c, 2);
 
-  await c.getByRole("button", { name: /^Gift Large/ }).click();
+  await c.getByRole("button", { name: /^Gift Big/ }).click();
   await c.waitForFunction(() => document.querySelectorAll(".note-out").length > 0, null, { timeout: 8000 });
   await c.waitForTimeout(2500);
   await c.screenshot({ path: path.join(OUT, "large-dispensing.png") });
   const bundleText = await c.locator(".note-out").first().innerText();
-  check("gift large dispenses ONE strapped bundle showing 'Rp 1.000.000' + VIRTUAL", (await notes()) === 1 && /1\.000\.000/.test(bundleText) && /VIRTUAL/.test(bundleText), bundleText.replace(/\n/g, " "));
+  check("gift big dispenses ONE strapped bundle showing 'Rp 1.000.000' + VIRTUAL", (await notes()) === 1 && /1\.000\.000/.test(bundleText) && /VIRTUAL/.test(bundleText), bundleText.replace(/\n/g, " "));
   await waitProcessed(c, 3);
 
   // ---------- burst, duplicates, clear, stress ----------
@@ -130,7 +130,7 @@ async function mainSuite(browser) {
   await c.bringToFront();
   await c.waitForFunction(() => document.querySelector("[data-testid=overlay-status]")?.textContent.includes("connected"), null, { timeout: 10000 });
   check("control detects overlay (same-browser link)", true, await tid(c, "overlay-status"));
-  await c.getByRole("button", { name: /^Gift Large/ }).click();
+  await c.getByRole("button", { name: /^Gift Big/ }).click();
   await o.waitForTimeout(3600);
   await o.screenshot({ path: path.join(OUT, "overlay-large.png") });
   await c.waitForFunction(() => parseInt(document.querySelector("[data-testid=processed]").textContent, 10) >= 1, null, { timeout: 30000 });
@@ -204,7 +204,7 @@ async function mainSuite(browser) {
   await a.getByRole("button", { name: "Activate Audio" }).click();
   await a.waitForTimeout(1500);
   const samples = await tid(a, "samples");
-  check("audio 500 / corrupt file: reported as MISSING/degraded, app alive", /MISSING: cash_dispense/.test(samples) || /3\/5|4\/5/.test(samples), samples);
+  check("audio 500 / corrupt file: reported as MISSING/degraded, app alive", /MISSING: cash_dispense/.test(samples) || /1[0-3]\/14/.test(samples), samples);
   await a.getByRole("button", { name: /^Gift Small/ }).click();
   await waitProcessed(a, 1, 40000);
   check("audio failure does not stop the visual transaction", true);
@@ -212,6 +212,212 @@ async function mainSuite(browser) {
   await ctx3.close();
 
   check("main suite: no console errors / failed requests / page errors", errors.length === 0, errors.join(" | "));
+}
+
+
+async function themeSuite(browser) {
+  console.log("\n== theme suite (3 themes, production build) ==");
+  const base = `http://127.0.0.1:${PORT_MAIN}`;
+  const errors = [];
+  const ign = ["GL Driver Message", "ReadPixels"]; // SwiftShader (software GL) performance chatter, not an app error
+  const ctx = await browser.newContext({ viewport: IPAD });
+  const external = new Set();
+  ctx.on("request", (r) => { const u = new URL(r.url()); if (!["127.0.0.1", "localhost"].includes(u.hostname) && u.protocol.startsWith("http")) external.add(u.hostname); });
+  const c = await ctx.newPage();
+  watchErrors(c, "control", errors, ign);
+  await c.goto(`${base}/control`);
+  await c.waitForTimeout(700);
+  const o = await ctx.newPage();
+  await o.setViewportSize({ width: 540, height: 960 });
+  watchErrors(o, "overlay", errors, ign);
+  await o.goto(`${base}/overlay?bg=dark&clean=1&debug=1`);
+  await o.waitForTimeout(900);
+  const hud = async () => (await o.locator("pre").innerText());
+  const waitStandby = async (ms = 90000) => c.waitForFunction(() => document.querySelector("[data-testid=phase]")?.textContent.trim() === "standby" && document.querySelector("[data-testid=waiting]")?.textContent.trim() === "0", null, { timeout: ms });
+  const processed = async () => num(c, "processed");
+  await c.waitForFunction(() => document.querySelector("[data-testid=overlay-status]")?.textContent.includes("connected"), null, { timeout: 15000 });
+
+  // --- theme selector syncs to overlay ---
+  for (const t of ["reactor", "marble", "atm"]) {
+    await c.getByTestId(`theme-${t}`).click();
+    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
+    const kind = t === "atm" ? await o.getByTestId("atm-body").count() : await o.locator(`[data-testid=three-stage][data-theme=${t}]`).count();
+    check(`theme selector → overlay switches to ${t}`, kind === 1);
+  }
+  // persisted: reload overlay keeps last theme
+  await c.getByTestId("theme-reactor").click();
+  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("theme:reactor"), null, { timeout: 8000 });
+  await o.reload(); await o.waitForTimeout(1200);
+  check("theme persists across overlay reload", (await hud()).includes("theme:reactor"));
+  check("debug monitor is OFF unless ?debug=1", await (async () => { const p = await ctx.newPage(); await p.goto(`${base}/overlay?clean=1`); await p.waitForTimeout(500); const n = await p.locator("pre").count(); await p.close(); return n === 0; })());
+
+  // --- idle (attract) animation per theme ---
+  const diff = async (page) => { const a = await page.screenshot(); await page.waitForTimeout(1500); const b = await page.screenshot(); return !a.equals(b); };
+  for (const t of ["atm", "reactor", "marble"]) {
+    await c.getByTestId(`theme-${t}`).click();
+    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
+    await o.waitForTimeout(1200);
+    check(`${t}: idle animation runs by itself (frames differ with no events)`, await diff(o));
+  }
+  // idle disabled → static
+  await c.getByLabel("Idle animation").uncheck();
+  await o.waitForTimeout(1500);
+  for (const t of ["reactor", "atm"]) {
+    await c.getByTestId(`theme-${t}`).click();
+    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
+    await o.waitForTimeout(1500);
+    check(`${t}: idle animation can be disabled (static frame)`, !(await diff(o)));
+  }
+  await c.getByLabel("Idle animation").check();
+  await o.waitForTimeout(800);
+
+  // --- welcome shows the real username in every theme ---
+  for (const t of ["atm", "reactor", "marble"]) {
+    await c.getByTestId(`theme-${t}`).click();
+    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
+    const before = await processed();
+    await c.getByRole("button", { name: /^Viewer Join/ }).click();
+    const sel = t === "atm" ? "[data-testid=atm-welcome]" : "[data-testid=hud-welcome]";
+    await o.waitForSelector(sel, { timeout: 15000 });
+    const txt = (await o.locator(sel).first().innerText()).replace(/\n/g, " ");
+    const logName = /@([a-z0-9_.]+)/i.exec(txt);
+    check(`${t}: join shows "Welcome/…, @username" (real name)`, !!logName && /(Welcome|Glad|visitor)/i.test(txt), txt.slice(0, 70));
+    if (t !== "atm") await o.screenshot({ path: path.join(OUT, `theme-${t}-join.png`) });
+    await waitStandby(); 
+    await c.waitForFunction((b) => parseInt(document.querySelector("[data-testid=processed]").textContent, 10) > b, before, { timeout: 30000 });
+  }
+
+  // --- gift levels visible: ATM note counts per level ---
+  await c.getByTestId("theme-atm").click();
+  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("theme:atm"), null, { timeout: 8000 });
+  const noteCounts = {};
+  for (const [label, key] of [["Gift Small", "small"], ["Gift Medium", "medium"], ["Gift Big", "big"], ["Gift Special", "special"]]) {
+    await c.getByRole("button", { name: new RegExp("^" + label) }).click();
+    await o.waitForFunction(() => document.querySelectorAll(".note-out").length > 0, null, { timeout: 15000 });
+    await o.waitForTimeout(key === "special" ? 3500 : 2800);
+    noteCounts[key] = await o.locator(".note-out").count();
+    if (key === "special") await o.screenshot({ path: path.join(OUT, "atm-special.png") });
+    await waitStandby();
+    await o.waitForTimeout(600);
+  }
+  check("ATM levels: small 3-6 notes, medium 10 notes, big 1 bundle, special 2 bundles", noteCounts.small >= 3 && noteCounts.small <= 6 && noteCounts.medium === 10 && noteCounts.big === 1 && noteCounts.special === 2, JSON.stringify(noteCounts));
+
+  // --- stress on the Reactor: 5 gifts, big during animation, 20 joins, special after the long queue ---
+  await c.getByTestId("theme-reactor").click();
+  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("theme:reactor"), null, { timeout: 8000 });
+  const p0 = await processed();
+  for (let i = 0; i < 5; i++) await c.getByRole("button", { name: /^Gift Small/ }).click();
+  await o.waitForFunction(() => /phase:(processing|dispensing)/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 15000 });
+  await c.getByRole("button", { name: /^Gift Big/ }).click(); // while an animation is running
+  await c.getByRole("button", { name: /Join ×20/ }).click();
+  await c.getByRole("button", { name: /^Gift Special/ }).click();
+  await sleep(500);
+  const waitingNow = await num(c, "waiting");
+  check("stress: long queue builds (5 gifts + big + 20 joins + special)", waitingNow >= 15, "waiting=" + waitingNow);
+  await waitStandby(180000);
+  await sleep(1500);
+  const p1 = await processed();
+  check("stress: all 27 events processed exactly once, queue empty, nothing dropped", p1 - p0 === 27 && (await num(c, "waiting")) === 0 && (await num(c, "dropped")) === 0, `processed +${p1 - p0}`);
+  const recent = await c.getByTestId("recent-list").innerText();
+  check("recent visitors list is shown in control (max 8)", (recent.match(/@/g) || []).length <= 8 && (recent.match(/@/g) || []).length >= 5);
+
+  // --- theme switching while a queue is running ---
+  const s0 = await processed();
+  for (let i = 0; i < 3; i++) await c.getByRole("button", { name: /^Gift Medium/ }).click();
+  await o.waitForFunction(() => /phase:(processing|dispensing)/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 15000 });
+  for (const t of ["marble", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await sleep(900); }
+  await waitStandby(120000);
+  await sleep(1200);
+  check("theme switching during a queue: every event completes once", (await processed()) - s0 === 3, `processed +${(await processed()) - s0}`);
+
+  // --- cleanup / leak check: cycle themes, one canvas at a time, geometry/texture counts stable, heap bounded ---
+  const heap = async () => o.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize / 1048576 : 0));
+  const counts = async () => { const h = await hud(); const m = /geo:(\d+) tex:(\d+)/.exec(h); return m ? [+m[1], +m[2]] : [0, 0]; };
+  await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(1500);
+  const geo0 = (await counts())[0], h0 = await heap();
+  for (let i = 0; i < 4; i++) for (const t of ["marble", "reactor", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await o.waitForTimeout(350); }
+  await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(2500);
+  const [geo1] = await counts();
+  const canv = await o.evaluate(() => document.querySelectorAll("canvas").length);
+  const h1 = await heap();
+  check("cleanup: exactly one WebGL canvas after 16 theme switches", canv === 1, "canvases=" + canv);
+  check("cleanup: GPU geometry count does not grow over theme switches", geo1 <= geo0 + 2, `geometries ${geo0} → ${geo1}`);
+  check("cleanup: JS heap growth stays small over 16 theme switches", h1 - h0 < 40, `${h0.toFixed(1)} → ${h1.toFixed(1)} MB`);
+
+  // --- WebGL context loss and restore ---
+  const lost = await o.evaluate(() => !!window.__visual);
+  check("debug hook available (?debug=1)", lost);
+  await o.evaluate(() => window.__visual.loseContext());
+  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("gl:lost"), null, { timeout: 8000 });
+  check("context loss is detected (gl:lost) without page error", true);
+  await o.evaluate(() => window.__visual.restoreContext());
+  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("gl:ok"), null, { timeout: 12000 });
+  await o.waitForTimeout(1500);
+  check("context restored: scene rebuilt and animating again", await diff(o));
+  await c.getByRole("button", { name: /^Viewer Join/ }).click();
+  await o.waitForSelector("[data-testid=hud-welcome]", { timeout: 15000 });
+  check("transactions still work after context restore", true);
+  await waitStandby();
+
+  // --- transparency (canvas + page) ---
+  const op = await ctx.newPage();
+  await op.setViewportSize({ width: 540, height: 960 });
+  watchErrors(op, "transparent", errors, ign);
+  await op.goto(`${base}/overlay?clean=1`);
+  await op.waitForTimeout(2500);
+  const png = (await op.screenshot({ omitBackground: true })).toString("base64");
+  const alpha = await (await ctx.newPage()).evaluate(async (b64) => {
+    const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
+    const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
+    const g = cv.getContext("2d"); g.drawImage(img, 0, 0);
+    const a = (x, y) => g.getImageData(x, y, 1, 1).data[3];
+    return { corners: [a(3, 3), a(img.width - 4, 3), a(3, img.height - 4)], centre: a(Math.floor(img.width / 2), Math.floor(img.height * 0.46)), w: img.width };
+  }, png);
+  check("WebGL overlay is transparent at the corners and drawn in the centre (alpha channel)", alpha.corners.some((v) => v === 0) && alpha.centre > 0, JSON.stringify(alpha));
+  await op.close();
+
+  // --- no CDN / third-party host at runtime ---
+  check("no third-party/CDN request in the whole theme suite", external.size === 0, [...external].join(","));
+
+  // --- overlay reload (reconnect) mid-queue: nothing repeated, nothing lost ---
+  await c.getByTestId("theme-reactor").click();
+  await o.waitForTimeout(800);
+  for (let i = 0; i < 4; i++) await c.getByRole("button", { name: /^Gift Small/ }).click();
+  const doneOf = async () => { const m = /done:(\d+)/.exec(await hud()); return m ? +m[1] : 0; };
+  await o.waitForFunction(() => /done:1/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
+  const doneBefore = await doneOf();
+  await o.reload();
+  await o.waitForTimeout(1500);
+  await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 90000 });
+  await o.waitForTimeout(1500);
+  const doneAfter = await doneOf();
+  check("overlay reload mid-queue: pending resume, finished ones not repeated (before+after = 4)", doneBefore + doneAfter === 4, `before=${doneBefore} after=${doneAfter}`);
+
+  check("theme suite: no console errors / page errors / failed requests", errors.length === 0, errors.slice(0, 4).join(" | "));
+  await ctx.close();
+
+  // --- no WebGL at all → DOM fallback, names still shown ---
+  const nb = await chromium.launch({ args: ["--disable-gpu", "--disable-3d-apis", "--disable-webgl", "--autoplay-policy=no-user-gesture-required"] });
+  try {
+    const nctx = await nb.newContext({ viewport: IPAD });
+    const nerr = [];
+    const nc = await nctx.newPage(); watchErrors(nc, "nowebgl-control", nerr);
+    await nc.goto(`${base}/control`); await nc.waitForTimeout(600);
+    const no = await nctx.newPage(); await no.setViewportSize({ width: 540, height: 960 }); watchErrors(no, "nowebgl-overlay", nerr);
+    await no.goto(`${base}/overlay?clean=1&debug=1`); await no.waitForTimeout(800);
+    for (const t of ["reactor", "marble"]) {
+      await nc.getByTestId(`theme-${t}`).click();
+      await no.waitForSelector("[data-testid=fallback-stage]", { timeout: 10000 });
+      check(`${t}: WebGL unavailable → DOM fallback shown`, (await no.locator("[data-testid=fallback-stage]").getAttribute("data-theme")) === t);
+      await nc.getByRole("button", { name: /^Viewer Join/ }).click();
+      await no.waitForSelector("[data-testid=hud-welcome]", { timeout: 15000 });
+      check(`${t}: fallback still shows the welcome name`, /@/.test(await no.locator("[data-testid=hud-welcome]").innerText()));
+      await nc.waitForFunction(() => document.querySelector("[data-testid=phase]")?.textContent.trim() === "standby", null, { timeout: 30000 });
+    }
+    check("WebGL status reported as unavailable in the debug monitor", (await no.locator("pre").innerText()).includes("gl:unavailable"));
+    check("no-WebGL scenario: no JS errors", nerr.length === 0, nerr.join(" | "));
+    await nctx.close();
+  } finally { await nb.close(); }
 }
 
 async function remoteSuite(browser, phoenix) {
@@ -237,7 +443,7 @@ async function remoteSuite(browser, phoenix) {
   await c.getByRole("button", { name: /^Viewer Join/ }).click();
   await o.waitForFunction(() => /phase:processing|phase:dispensing/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 15000 });
   check("event sent from control animates in the separate overlay context", true);
-  await c.getByRole("button", { name: /^Gift Large/ }).click();
+  await c.getByRole("button", { name: /^Gift Big/ }).click();
   await waitProcessed(c, 2, 60000);
   check("overlay processed both events; status mirrored back to control", (await num(c, "processed")) === 2, "processed=" + (await tid(c, "processed")));
 
@@ -298,6 +504,7 @@ async function remoteSuite(browser, phoenix) {
   const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
   try {
     await mainSuite(browser);
+    await themeSuite(browser);
 
     const phoenix = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/phoenix-cli.ts"]);
     await new Promise((resolve) => { const t = setInterval(() => { if (phoenix.out.includes("{")) { clearInterval(t); resolve(); } }, 50); });

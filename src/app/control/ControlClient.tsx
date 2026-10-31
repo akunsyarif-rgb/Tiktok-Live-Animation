@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AtmStage } from "../../components/atm/AtmStage.tsx";
+import { ThemeStage } from "../../components/themes/ThemeStage.tsx";
 import { StageScaler } from "../../components/atm/StageScaler.tsx";
-import { createEvent, EVENT_LABEL, type AtmEvent, type AtmEventType } from "../../lib/events.ts";
+import { createSimEvent, EVENT_LABEL, type AtmEvent, type SimKind } from "../../lib/events.ts";
+import { DEFAULT_VISUAL, LEVEL_LABEL, THEMES, type VisualSettings } from "../../lib/levels.ts";
 import { DEFAULT_POLICY, type QueueMode } from "../../lib/queue.ts";
 import { Outbox } from "../../lib/outbox.ts";
 import { generateRoom } from "../../lib/config.ts";
 import type { ListenerStatus, Msg, OverlayStatus, Settings } from "../../lib/protocol.ts";
 import { SOUND_IDS } from "../../lib/audio/manifest.ts";
-import { loadPrefs, savePrefs, useAtm } from "../../lib/useAtm.ts";
+import { loadPrefs, loadVisual, savePrefs, saveVisual, useAtm } from "../../lib/useAtm.ts";
 import { REMOTE, resolveRoom, saveRoom, useLink } from "../../lib/useLink.ts";
 
 const MODES: { id: QueueMode; label: string }[] = [
@@ -47,7 +48,7 @@ export function ControlClient() {
   const localAudio = useSyncExternalStore(audio.subscribe, audio.getSnapshot, audio.getSnapshot);
   const logs = useSyncExternalStore(diag.subscribe, diag.getSnapshot, diag.getSnapshot);
 
-  const [settings, setSettings] = useState<Settings>({ mode: "hybrid", hybridGiftBurst: DEFAULT_POLICY.hybridGiftBurst, hybridMaxJoinWaitMs: DEFAULT_POLICY.hybridMaxJoinWaitMs, volume: 0.8, muted: false });
+  const [settings, setSettings] = useState<Settings>({ mode: "hybrid", hybridGiftBurst: DEFAULT_POLICY.hybridGiftBurst, hybridMaxJoinWaitMs: DEFAULT_POLICY.hybridMaxJoinWaitMs, volume: 0.8, muted: false, visual: DEFAULT_VISUAL });
   const [route, setRoute] = useState<"auto" | "local">("auto");
   const [room, setRoom] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -74,7 +75,7 @@ export function ControlClient() {
     // browser-only state (localStorage / URL) can only be read after hydration
     /* eslint-disable react-hooks/set-state-in-effect */
     const p = loadPrefs();
-    setSettings((s) => ({ ...s, volume: p.volume, muted: p.muted }));
+    setSettings((s) => ({ ...s, volume: p.volume, muted: p.muted, visual: loadVisual() }));
     setRoom(resolveRoom(true));
     setReady(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -135,9 +136,12 @@ export function ControlClient() {
     controller.setPolicy({ hybridGiftBurst: s.hybridGiftBurst, hybridMaxJoinWaitMs: s.hybridMaxJoinWaitMs });
     audio.setVolume(s.volume);
     audio.setMuted(s.muted);
+    controller.setVisual(s.visual);
+    saveVisual(s.visual);
     savePrefs({ volume: s.volume, muted: s.muted });
     pushSettings(s);
   };
+  const updateVisual = (patch: Partial<VisualSettings>) => update({ visual: { ...settingsRef.current.visual, ...patch } });
 
   const dispatch = useCallback(
     (ev: AtmEvent) => {
@@ -152,9 +156,10 @@ export function ControlClient() {
     [useOverlay, controller, addLog],
   );
 
-  const send = (t: AtmEventType) => dispatch(createEvent(t));
+  const send = (k: SimKind) => dispatch(createSimEvent(k));
   const resendDuplicate = () => (lastEvent.current ? dispatch(lastEvent.current) : addLog("nothing to duplicate yet"));
-  const burst = () => (["VIEWER_JOIN", "VIEWER_JOIN", "GIFT_SMALL", "VIEWER_JOIN", "GIFT_LARGE", "GIFT_SMALL"] as const).forEach(send);
+  const burst = () => (["join", "join", "small", "join", "big", "medium"] as const).forEach(send);
+  const joins20 = () => Array.from({ length: 20 }).forEach(() => send("join"));
   const clearQueue = () => {
     controller.clearPending();
     sendRef.current({ v: 1, t: "clear" });
@@ -216,6 +221,47 @@ export function ControlClient() {
             </p>
           </Panel>
 
+          <Panel title="Theme & visuals">
+            <div className="grid gap-2 sm:grid-cols-3" role="group" aria-label="Theme">
+              {THEMES.map((t) => (
+                <button key={t.id} data-testid={`theme-${t.id}`} onClick={() => updateVisual({ theme: t.id })} aria-pressed={settings.visual.theme === t.id}
+                  className={`${btn} ${settings.visual.theme === t.id ? "bg-[#2f7d4a] text-white" : "bg-[#3a4047]"}`}>{t.label}</button>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="flex items-center justify-between gap-2 text-sm">Idle / attract animation
+                <input type="checkbox" className="h-6 w-6" checked={settings.visual.idleEnabled} onChange={(e) => updateVisual({ idleEnabled: e.target.checked })} aria-label="Idle animation" />
+              </label>
+              <label className="flex items-center justify-between gap-2 text-sm">Show recent visitors
+                <input type="checkbox" className="h-6 w-6" checked={settings.visual.showRecent} onChange={(e) => updateVisual({ showRecent: e.target.checked })} aria-label="Show recent visitors" />
+              </label>
+              <label className="flex items-center gap-3 text-sm">Welcome (s)
+                <input type="range" min={2} max={12} step={0.5} value={settings.visual.welcomeMs / 1000} onChange={(e) => updateVisual({ welcomeMs: Number(e.target.value) * 1000 })} className="h-10 flex-1" aria-label="Welcome duration" />
+                <span className="w-10 text-right tabular-nums">{(settings.visual.welcomeMs / 1000).toFixed(1)}</span>
+              </label>
+              <label className="flex items-center gap-3 text-sm">Intensity
+                <input type="range" min={0.5} max={1.5} step={0.05} value={settings.visual.intensity} onChange={(e) => updateVisual({ intensity: Number(e.target.value) })} className="h-10 flex-1" aria-label="Animation intensity" />
+                <span className="w-10 text-right tabular-nums">{Math.round(settings.visual.intensity * 100)}%</span>
+              </label>
+            </div>
+            <div className="mt-3 text-xs text-white/60">Gift level by value (diamonds). Small = below Medium. A second Special within {Math.round(settings.visual.specialCooldownMs / 1000)} s is shown as Big.</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {([["giftMediumDiamonds", "Medium ≥"], ["giftBigDiamonds", "Big ≥"], ["giftSpecialDiamonds", "Special ≥"]] as const).map(([k, label]) => (
+                <label key={k} className="flex items-center justify-between gap-2 text-sm">{label}
+                  <input type="number" min={1} value={settings.visual[k]} aria-label={`${label} diamonds`} data-testid={`thr-${k}`}
+                    onChange={(e) => updateVisual({ [k]: Math.max(1, Math.floor(Number(e.target.value) || 1)) })}
+                    className="h-11 w-28 rounded bg-[#2a2f34] px-2 text-right" />
+                </label>
+              ))}
+            </div>
+            {settings.visual.showRecent && (
+              <div className="mt-3 text-sm" data-testid="recent-list">
+                <div className="text-white/60">Recent visitors</div>
+                {view.recent?.length ? view.recent.map((r) => <span key={r.name} className="mr-3">{r.kind === "gift" ? "★" : "›"} @{r.name}</span>) : <span className="text-white/40">none yet</span>}
+              </div>
+            )}
+          </Panel>
+
           <Panel title="Queue mode">
             <div className="grid gap-2 sm:grid-cols-3">
               {MODES.map((m) => (
@@ -241,13 +287,16 @@ export function ControlClient() {
           </Panel>
 
           <Panel title="Simulate events (not TikTok)">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <button className={`${btn} bg-[#2d5f8a] text-white`} onClick={() => send("VIEWER_JOIN")}>Viewer Join<br /><span className="text-xs font-normal">1 note</span></button>
-              <button className={`${btn} bg-[#8a6a2d] text-white`} onClick={() => send("GIFT_SMALL")}>Gift Small<br /><span className="text-xs font-normal">several notes</span></button>
-              <button className={`${btn} bg-[#8a2d4a] text-white`} onClick={() => send("GIFT_LARGE")}>Gift Large<br /><span className="text-xs font-normal">bundle of 10</span></button>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              <button className={`${btn} bg-[#2d5f8a] text-white`} onClick={() => send("join")}>Viewer Join<br /><span className="text-xs font-normal">level 0</span></button>
+              <button className={`${btn} bg-[#4f7a3a] text-white`} onClick={() => send("small")}>Gift Small<br /><span className="text-xs font-normal">level 1</span></button>
+              <button className={`${btn} bg-[#8a6a2d] text-white`} onClick={() => send("medium")}>Gift Medium<br /><span className="text-xs font-normal">level 2</span></button>
+              <button className={`${btn} bg-[#8a2d4a] text-white`} onClick={() => send("big")}>Gift Big<br /><span className="text-xs font-normal">level 3</span></button>
+              <button className={`${btn} bg-[#6a2d8a] text-white`} onClick={() => send("special")}>Gift Special<br /><span className="text-xs font-normal">level 4</span></button>
             </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <div className="mt-2 grid gap-2 sm:grid-cols-4">
               <button className={`${btn} bg-[#3a4047]`} onClick={burst}>Burst ×6 (mixed)</button>
+              <button className={`${btn} bg-[#3a4047]`} onClick={joins20}>Join ×20</button>
               <button className={`${btn} bg-[#3a4047]`} onClick={resendDuplicate}>Resend last (duplicate test)</button>
               <button className={`${btn} bg-[#4a2f2f]`} onClick={clearQueue}>Clear waiting queue</button>
             </div>
@@ -265,8 +314,9 @@ export function ControlClient() {
               <dt className="text-white/60">Dropped (queue full)</dt><dd data-testid="dropped">{view.dropped}</dd>
               <dt className="text-white/60">Watchdog recoveries</dt><dd>{view.recovered}</dd>
               <dt className="text-white/60">Mode</dt><dd>{view.mode}</dd>
+              <dt className="text-white/60">Theme</dt><dd data-testid="theme-active">{view.visual?.theme ?? "atm"}</dd>
             </dl>
-            <div className="mt-2 text-sm">Now: {view.current ? `${EVENT_LABEL[view.current.type]} — @${view.current.username}` : "idle"}</div>
+            <div className="mt-2 text-sm" data-testid="now">Now: {view.current ? `${LEVEL_LABEL[view.level ?? 0]} — @${view.current.username}${view.group?.length > 1 ? ` (+${view.group.length - 1} group)` : ""}` : "idle"}</div>
             <ol className="mt-2 space-y-1 text-sm text-white/80">
               {view.waiting.map((w) => <li key={w.id}>{EVENT_LABEL[w.type]} — @{w.username}</li>)}
               {view.waitingTotal > view.waiting.length && <li>… +{view.waitingTotal - view.waiting.length} more</li>}
@@ -334,7 +384,7 @@ export function ControlClient() {
           <div className="mb-2 text-xs uppercase tracking-wider text-white/60">Preview {useOverlay ? "(idle: events go to overlay)" : "(live)"}</div>
           <div className="aspect-[9/16] w-full rounded-lg bg-[#101418]">
             <StageScaler>
-              <AtmStage controller={controller} />
+              <ThemeStage controller={controller} audio={audio} paused={useOverlay && settings.visual.theme !== "atm"} />
             </StageScaler>
           </div>
         </div>

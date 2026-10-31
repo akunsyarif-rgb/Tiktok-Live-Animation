@@ -9,6 +9,22 @@ Source of truth in code: `src/lib/audio/manifest.ts`. Files live in `public/audi
 | `gift_processing` | `gift_processing.wav` | Gift Small + Gift Large: processing stage | 1.9 s | Synthesized | **No** |
 | `premium_dispense` | `premium_dispense.wav` | Gift Large: dispensing stage (bundle) | 3.8 s | Synthesized | **No** |
 
+## Theme sounds added with the Reactor / Marble themes (all synthesized, CC0, 22.05 kHz mono)
+
+| Sound ID | File | Use | Length |
+|---|---|---|---|
+| `rx_pulse` | `rx_pulse.wav` | Reactor join | 0.8 s |
+| `rx_charge` | `rx_charge.wav` | Reactor charge riser (played faster for small gifts via `rate`) | 3.2 s |
+| `rx_release` | `rx_release.wav` | Reactor release boom (rate-varied) | 3.0 s |
+| `rx_special` | `rx_special.wav` | Reactor special (double release) | 5.6 s |
+| `rx_zap` | `rx_zap.wav` | Reactor arc crackle (sfx cue, pitch-varied) | 0.3 s |
+| `mb_launch` | `mb_launch.wav` | Marble launcher clack + gear ticks | 0.6 s |
+| `mb_finale` | `mb_finale.wav` | Marble special finale swell + bell chord | 4.0 s |
+| `mb_clack` | `mb_clack.wav` | Marble ball on rail (sfx cue) | 0.25 s |
+| `mb_bell` | `mb_bell.wav` | Marble bell bar (sfx cue, 3 pitches via `rate`) | 1.2 s |
+
+Idle is silent by default (no idle audio asset). Stage lengths are unit-tested to be ≥ the sounds that play in them.
+
 ## Honest status
 
 - All four files are **original, procedurally synthesized placeholders** (noise + oscillators shaped to mimic motor, note riffle, shutter, thunk, beeps). License: CC0, created for this repo. No copyrighted ATM recording is used.

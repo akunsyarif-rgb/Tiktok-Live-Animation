@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AtmStage } from "../../components/atm/AtmStage.tsx";
+import { ThemeStage } from "../../components/themes/ThemeStage.tsx";
+import { visualStats } from "../../visual/debug.ts";
 import { StageScaler } from "../../components/atm/StageScaler.tsx";
 import { createIngest } from "../../lib/ingest.ts";
 import type { Msg } from "../../lib/protocol.ts";
 import { resolveRoom, useLink } from "../../lib/useLink.ts";
-import { useAtm } from "../../lib/useAtm.ts";
+import { saveVisual, useAtm } from "../../lib/useAtm.ts";
+import { isThemeId } from "../../lib/levels.ts";
 
 const STATUS_THROTTLE_MS = 700;
 
@@ -21,7 +23,8 @@ export function OverlayClient() {
   const audioSnap = useSyncExternalStore(audio.subscribe, audio.getSnapshot, audio.getSnapshot);
   const atm = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const logs = useSyncExternalStore(diag.subscribe, diag.getSnapshot, diag.getSnapshot);
-  const [params, setParams] = useState({ clean: false, debug: false, bg: "" });
+  const [params, setParams] = useState({ clean: false, debug: false, bg: "", fps: 30 });
+  const stats = useSyncExternalStore(visualStats.subscribe, visualStats.get, visualStats.get);
   const [room, setRoom] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const autoAudio = useRef(false);
@@ -34,7 +37,9 @@ export function OverlayClient() {
     // browser-only state (URL / localStorage) can only be read after hydration
     /* eslint-disable react-hooks/set-state-in-effect */
     const q = new URLSearchParams(window.location.search);
-    setParams({ clean: q.get("clean") === "1", debug: q.get("debug") === "1", bg: q.get("bg") ?? "" });
+    setParams({ clean: q.get("clean") === "1", debug: q.get("debug") === "1", bg: q.get("bg") ?? "", fps: q.get("fps") === "60" ? 60 : 30 });
+    const forced = q.get("theme"); // ?theme=reactor|marble|atm : handy for tests / OBS-style direct use
+    if (isThemeId(forced)) controller.setVisual({ theme: forced });
     setRoom(resolveRoom(false));
     setReady(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -56,6 +61,8 @@ export function OverlayClient() {
       const s = m.settings;
       controller.setMode(s.mode);
       controller.setPolicy({ hybridGiftBurst: s.hybridGiftBurst, hybridMaxJoinWaitMs: s.hybridMaxJoinWaitMs });
+      controller.setVisual(s.visual);
+      saveVisual(controller.getVisual());
       audio.setVolume(s.volume);
       audio.setMuted(s.muted);
     } else if (m.t === "clear") controller.clearPending();
@@ -100,7 +107,7 @@ export function OverlayClient() {
   return (
     <div style={{ position: "fixed", inset: 0, background: bg }}>
       <StageScaler>
-        <AtmStage controller={controller} />
+        <ThemeStage controller={controller} audio={audio} fpsCap={params.fps} expose={params.debug} />
       </StageScaler>
       {audioSnap.state !== "active" && !params.clean && (
         <button
@@ -112,7 +119,7 @@ export function OverlayClient() {
       )}
       {params.debug && (
         <pre style={{ position: "fixed", left: 4, top: 4, margin: 0, padding: 6, maxWidth: "60vw", maxHeight: "40vh", overflow: "hidden", background: "rgba(0,0,0,.75)", color: "#9fe3b4", font: "10px/1.3 ui-monospace, monospace", whiteSpace: "pre-wrap" }}>
-          {`local:${link.local} remote:${link.remote}${link.remoteReason ? ` (${link.remoteReason})` : ""} room:${room ? room.slice(0, 4) + "…" : "none"}\naudio:${audioSnap.state}${audioSnap.muted ? " muted" : ""} vol:${Math.round(audioSnap.volume * 100)} fail:${audioSnap.failures}\nphase:${atm.phase} wait:${atm.waitingTotal} done:${atm.processed} dup:${atm.duplicates} drop:${atm.dropped}\n` +
+          {`theme:${atm.visual.theme} lvl:${atm.level} fps:${stats.fps} q:${stats.quality} dpr:${stats.dpr} gl:${stats.webgl} calls:${stats.drawCalls} tris:${stats.triangles} geo:${stats.geometries} tex:${stats.textures}\nlocal:${link.local} remote:${link.remote}${link.remoteReason ? ` (${link.remoteReason})` : ""} room:${room ? room.slice(0, 4) + "…" : "none"}\naudio:${audioSnap.state}${audioSnap.muted ? " muted" : ""} vol:${Math.round(audioSnap.volume * 100)} fail:${audioSnap.failures}\nphase:${atm.phase} wait:${atm.waitingTotal} done:${atm.processed} dup:${atm.duplicates} drop:${atm.dropped}\n` +
             logs.slice(-8).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.msg}`).join("\n")}
         </pre>
       )}

@@ -1,9 +1,11 @@
 import type { AtmEvent } from "./events.ts";
 import { sanitizeEvent } from "./events.ts";
 import { planDispense, type DispensePlan } from "./dispense.ts";
+import { DEFAULT_VISUAL, levelOf, normalizeVisual, type GiftLevel, type VisualSettings } from "./levels.ts";
+import { profileFor, type Profile } from "./profile.ts";
 import { DEFAULT_POLICY, EventQueue, type EnqueueResult, type QueueMode, type QueuePolicy, type QueueSerialized } from "./queue.ts";
-import type { SoundId } from "./audio/manifest.ts";
 import type { SoundPlayer } from "./audio/engine.ts";
+import type { SoundCue } from "./profile.ts";
 import type { DiagLevel } from "./diag.ts";
 
 export type Phase = "standby" | "processing" | "dispensing" | "complete";
@@ -54,6 +56,21 @@ export interface AtmSnapshot {
   recovered: number;
   /** Waiting joins evicted + events rejected because the queue was full. */
   dropped: number;
+  /** visual theme + settings: ONE source of truth shared by control, overlay and every renderer */
+  visual: VisualSettings;
+  level: GiftLevel;
+  /** group welcome: all names welcomed together (current included, first). Empty when not a group. */
+  group: string[];
+  recent: RecentItem[];
+  /** wall-clock ms (Date.now) of the current phase / transaction start: renderers derive animation from these */
+  phaseStartedAt: number;
+  txStartedAt: number;
+  timeline: { processingMs: number; mainMs: number; holdMs: number };
+}
+
+export interface RecentItem {
+  name: string;
+  kind: "join" | "gift";
 }
 
 export interface StorageLike {
@@ -65,6 +82,7 @@ export interface ControllerOptions {
   audio: SoundPlayer;
   mode?: QueueMode;
   policy?: Partial<QueuePolicy>;
+  visual?: Partial<VisualSettings>;
   timing?: Partial<Timing>;
   /** When set, the queue is mirrored here so a reload resumes pending events. */
   storage?: StorageLike;
@@ -107,6 +125,14 @@ export class AtmController {
   private runKey = 0;
   private processed = 0;
   private recovered = 0;
+  private visual: VisualSettings;
+  private level: GiftLevel = 0;
+  private group: string[] = [];
+  private recent: RecentItem[] = [];
+  private phaseStartedAt = 0;
+  private txStartedAt = 0;
+  private timeline = { processingMs: 0, mainMs: 0, holdMs: 0 };
+  private lastSpecialAt = -Infinity;
   private snapshot: AtmSnapshot;
 
   constructor(opts: ControllerOptions) {
@@ -117,6 +143,7 @@ export class AtmController {
     this.storage = opts.storage;
     this.storageKey = `atm:${opts.storageKey ?? "queue"}:v2`;
     this.log = opts.log ?? (() => undefined);
+    this.visual = normalizeVisual(opts.visual ?? {}, DEFAULT_VISUAL);
     this.snapshot = this.build("standby", null, null);
   }
 
@@ -156,7 +183,10 @@ export class AtmController {
     if (this.queue.evicted > evictedBefore) this.log("warn", "queue full: oldest waiting join evicted");
     if (res === "duplicate") this.log("info", `duplicate ignored ${clean.id}`);
     else if (res === "dropped") this.log("warn", `queue full: ${clean.type} dropped`);
-    else if (res === "accepted") this.log("info", `queued ${clean.type} @${clean.username} [${clean.source ?? "simulator"}]`);
+    else if (res === "accepted") {
+      this.log("info", `queued ${clean.type} @${clean.username} [${clean.source ?? "simulator"}]`);
+      this.noteRecent(clean.username, clean.type === "VIEWER_JOIN" ? "join" : "gift");
+    }
     this.publish();
     if (res === "accepted") void this.pump();
     return res;
@@ -170,6 +200,22 @@ export class AtmController {
   setPolicy(p: Partial<QueuePolicy>): void {
     this.queue.policy = { ...this.queue.policy, ...p };
     this.publish();
+  }
+
+  /** Theme + visual knobs. Validated; takes effect for the NEXT transaction (an active one finishes as planned). */
+  setVisual(patch: Partial<VisualSettings>): void {
+    const prev = this.visual;
+    this.visual = normalizeVisual({ ...prev, ...patch }, prev);
+    if (this.visual.theme !== prev.theme) this.log("info", `theme → ${this.visual.theme}`);
+    this.publish();
+  }
+
+  getVisual(): VisualSettings {
+    return this.visual;
+  }
+
+  private noteRecent(name: string, kind: RecentItem["kind"]): void {
+    this.recent = [{ name, kind }, ...this.recent.filter((r) => r.name !== name)].slice(0, 8);
   }
 
   clearPending(): number {
@@ -188,7 +234,12 @@ export class AtmController {
       while (this.started) {
         const ev = this.queue.next();
         if (!ev) break;
-        await this.runTransaction(ev);
+        let extras: AtmEvent[] = [];
+        if (ev.type === "VIEWER_JOIN" && this.queue.joinsWaiting + 1 >= this.visual.groupWelcomeAt) {
+          extras = this.queue.takeJoins(7); // group of up to 8 names, none dropped
+          if (extras.length) this.log("info", `group welcome: ${extras.length + 1} viewers`);
+        }
+        await this.runTransaction(ev, extras);
       }
     } finally {
       this.pumping = false;
@@ -197,16 +248,29 @@ export class AtmController {
     if (this.started && this.queue.length > 0) void this.pump();
   }
 
-  private async safePlay(id: SoundId): Promise<void> {
-    try {
-      await this.audio.play(id);
-    } catch (err) {
-      // audio problems must never stop the visual transaction
-      this.log("warn", `audio ${id} failed: ${(err as Error)?.message ?? "error"}`);
+  private async playCues(cues: SoundCue[]): Promise<void> {
+    for (const c of cues) {
+      try {
+        await this.audio.play(c.id, c.rate ? { rate: c.rate } : undefined);
+      } catch (err) {
+        // audio problems must never stop the visual transaction
+        this.log("warn", `audio ${c.id} failed: ${(err as Error)?.message ?? "error"}`);
+      }
     }
   }
 
-  private async runTransaction(ev: AtmEvent): Promise<void> {
+  /** Level of an event now: configurable thresholds, and a Special inside the cool-down is shown as Big. */
+  private levelFor(ev: AtmEvent): GiftLevel {
+    let level = levelOf(ev, this.visual);
+    if (level === 4 && this.now() - this.lastSpecialAt < this.visual.specialCooldownMs) {
+      this.log("info", "special on cool-down → shown as big");
+      level = 3;
+    }
+    if (level === 4) this.lastSpecialAt = this.now();
+    return level;
+  }
+
+  private async runTransaction(ev: AtmEvent, extras: AtmEvent[]): Promise<void> {
     const tx = this.makeTx();
     this.tx = tx;
     const watchdog = this.later(() => {
@@ -215,30 +279,29 @@ export class AtmController {
       tx.abort("watchdog");
     }, this.timing.watchdogMs);
 
-    const plan = planDispense(ev);
-    const [procSound, cashSound]: [SoundId, SoundId] =
-      ev.type === "VIEWER_JOIN" ? ["processing", "cash_dispense"]
-      : ev.type === "GIFT_SMALL" ? ["gift_processing", "cash_dispense"]
-      : ["gift_processing", "premium_dispense"];
+    const level = this.levelFor(ev);
+    const plan = planDispense(ev, level);
+    const prof: Profile = profileFor(this.visual.theme, level, plan, this.timing, this.visual.welcomeMs);
+    this.level = level;
+    this.group = extras.length ? [ev.username, ...extras.map((e) => e.username)] : [];
+    this.timeline = { processingMs: prof.processingMs, mainMs: prof.mainMs, holdMs: prof.holdMs };
+    this.txStartedAt = Date.now();
 
     let completed = false;
     try {
       this.runKey += 1;
-      this.log("info", `start ${ev.type} @${ev.username}`);
+      this.log("info", `start L${level} ${ev.type} @${ev.username}${extras.length ? ` +${extras.length}` : ""} [${this.visual.theme}]`);
+      this.phaseStartedAt = Date.now();
       this.publish("processing", ev, plan);
-      await this.guard(Promise.all([
-        this.safePlay(procSound),
-        this.sleep(ev.type === "VIEWER_JOIN" ? this.timing.processingJoinMs : this.timing.processingGiftMs, tx),
-      ]), tx);
+      await this.guard(Promise.all([this.playCues(prof.proc), this.sleep(prof.processingMs, tx)]), tx);
 
+      this.phaseStartedAt = Date.now();
       this.publish("dispensing", ev, plan);
-      await this.guard(Promise.all([
-        this.safePlay(cashSound),
-        this.sleep(Math.max(plan.animMs, this.timing.dispenseMinMs) * this.timing.animScale, tx),
-      ]), tx);
+      await this.guard(Promise.all([this.playCues(prof.main), this.sleep(prof.mainMs, tx)]), tx);
 
+      this.phaseStartedAt = Date.now();
       this.publish("complete", ev, plan);
-      await this.guard(Promise.all([this.safePlay("success"), this.sleep(this.timing.completeHoldMs, tx)]), tx);
+      await this.guard(Promise.all([this.playCues(prof.success ? [prof.success] : []), this.sleep(prof.holdMs, tx)]), tx);
       completed = true;
     } catch {
       // aborted by watchdog (counted + logged) or stop() (event re-queued below)
@@ -250,10 +313,12 @@ export class AtmController {
         this.queue.requeueActive();
       } else {
         this.queue.abortActive();
-        this.processed += 1;
+        this.processed += 1 + extras.length;
         if (completed) this.log("info", `done ${ev.type} @${ev.username}`);
       }
       this.tx = null;
+      this.group = [];
+      this.phaseStartedAt = Date.now();
       this.publish("standby", null, null);
     }
     if (this.started) await this.sleep(this.timing.gapMs, this.makeTx());
@@ -304,6 +369,13 @@ export class AtmController {
       duplicates: this.queue.duplicates,
       recovered: this.recovered,
       dropped: this.queue.evicted + this.queue.rejected,
+      visual: this.visual,
+      level: this.level,
+      group: this.group,
+      recent: this.recent,
+      phaseStartedAt: this.phaseStartedAt,
+      txStartedAt: this.txStartedAt,
+      timeline: this.timeline,
     };
   }
 
@@ -341,8 +413,9 @@ export class AtmController {
         (Array.isArray(list) ? list : []).map(sanitizeEvent).filter((e): e is AtmEvent => e !== null);
       const pending = clean(data.queue.pending);
       const active = clean(data.queue.active ? [data.queue.active] : [])[0];
+      const extras = clean(data.queue.activeExtras);
       // a transaction already showing "take your cash" was delivered: do not run it twice
-      if (active && data.activePhase !== "complete") pending.unshift(active);
+      if (active && data.activePhase !== "complete") pending.unshift(active, ...extras);
       const seen = Array.isArray(data.queue.seen) ? data.queue.seen.filter((s): s is string => typeof s === "string") : [];
       this.queue.restore({ pending, active: null, seen });
       this.log("info", `restored ${pending.length} pending event(s) after reload`);

@@ -53,3 +53,43 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 @media (prefers-reduced-motion: reduce) {
   .blink, .led-pulse, .slot-active, .keypad-active .atm-key { animation: none; }
 }
+
+/* ---------- theme HUD + WebGL fallback ---------- */
+@keyframes hud-in { from { opacity: 0; transform: translateY(-8px) } to { opacity: 1; transform: translateY(0) } }
+.hud-in { animation: hud-in .35s ease-out both; }
+
+@keyframes fb-spin { to { transform: rotate(360deg) } }
+@keyframes fb-pulse { 0%, 100% { transform: scale(1); opacity: .75 } 50% { transform: scale(1.12); opacity: 1 } }
+.fb-reactor { position: absolute; left: 50%; top: 44%; width: 0; height: 0; }
+.fb-ring { position: absolute; border-radius: 50%; border: 3px solid #4a5560; box-shadow: 0 0 10px rgba(95,224,240,.25); animation: fb-spin 12s linear infinite; }
+.fb-ring.r1 { left: -110px; top: -110px; width: 220px; height: 220px; border-top-color: #5fe0f0; }
+.fb-ring.r2 { left: -160px; top: -160px; width: 320px; height: 320px; animation-duration: 20s; animation-direction: reverse; border-right-color: #5fe0f0; }
+.fb-ring.r3 { left: -210px; top: -210px; width: 420px; height: 420px; animation-duration: 32s; border-bottom-color: #5fe0f0; }
+.fb-core { position: absolute; left: -45px; top: -45px; width: 90px; height: 90px; border-radius: 50%; background: radial-gradient(circle, #e8fdff 0%, #5fe0f0 45%, rgba(20,90,110,.2) 100%); animation: fb-pulse 6s ease-in-out infinite; }
+.fb-reactor.fb-active .fb-core { animation-duration: 1.2s; }
+.fb-reactor.fb-active .fb-ring { animation-duration: 3s; }
+.fb-marble { position: absolute; inset: 0; }
+.fb-rail { position: absolute; left: 60px; right: 60px; top: 300px; height: 6px; background: #8a939c; transform: rotate(8deg); box-shadow: 0 90px 0 #8a939c, 0 180px 0 #8a939c; }
+@keyframes fb-roll { 0% { transform: translate(60px, 280px) } 50% { transform: translate(440px, 330px) } 100% { transform: translate(60px, 560px) } }
+.fb-ball { position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #fff, #8d96a0 60%, #444); animation: fb-roll 9s ease-in-out infinite; }
+.fb-ball.b2 { animation-delay: -4.5s; background: radial-gradient(circle at 30% 30%, #ffe9b0, #b08a45 60%, #4a3a18); }
+.fb-gear { position: absolute; left: 70px; top: 120px; width: 120px; height: 120px; border-radius: 50%; border: 10px dashed #b08a45; animation: fb-spin 14s linear infinite; }
+.fb-marble.fb-active .fb-ball { animation-duration: 3.5s; }
+.fb-still .fb-ring, .fb-still .fb-core, .fb-still .fb-ball, .fb-still .fb-gear { animation: none; }
+
+/* ---------- ATM idle / indicator lights ---------- */
+@keyframes led-chase { 0%, 100% { opacity: .15 } 12% { opacity: 1 } 30% { opacity: .15 } }
+.atm-leds i { display: block; width: 14px; height: 6px; border-radius: 2px; background: #3fd16e; opacity: .15; animation: led-chase var(--chase, 4s) linear infinite; animation-delay: calc(var(--i) * var(--chase, 4s) / 8); }
+.atm-leds[data-mode="work"] { --chase: 1.2s; }
+.atm-leds[data-mode="fast"] { --chase: .6s; }
+.atm-leds[data-mode="fast"] i { background: #f0b34a; }
+.atm-still .atm-leds i, .atm-still .idle-msg { animation: none; }
+@keyframes idle-cycle { 0% { opacity: 0 } 3% { opacity: 1 } 22% { opacity: 1 } 26% { opacity: 0 } 100% { opacity: 0 } }
+.idle-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; opacity: 0; animation: idle-cycle 16s linear infinite; animation-delay: calc(var(--k) * 4s); }
+.atm-still .idle-msg:first-of-type { opacity: 1; }
+@keyframes door-jiggle { 0%, 92%, 100% { transform: translateX(0) } 94% { transform: translateX(-2px) } 96% { transform: translateX(2px) } 98% { transform: translateX(-1px) } }
+.atm-idle-mech { animation: door-jiggle 12s ease-in-out infinite; }
+.atm-still .atm-idle-mech { animation: none; }
+@keyframes special-border { 0%, 100% { box-shadow: inset 0 0 0 2px rgba(63,209,110,.2) } 50% { box-shadow: inset 0 0 0 2px rgba(240,179,74,.9) } }
+.special-screen { animation: special-border 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .atm-leds i, .idle-msg, .atm-idle-mech, .special-screen, .fb-ring, .fb-core, .fb-ball, .fb-gear { animation: none; } }

@@ -5,7 +5,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-const SR = 44100;
+let SR = 44100;
 const outDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "audio");
 mkdirSync(outDir, { recursive: true });
 
@@ -87,10 +87,10 @@ function addHum(buf, start, dur, amp) {
   }
 }
 
-function write(name, buf) {
+function write(name, buf, target = 0.8) {
   let peak = 0;
   for (const v of buf) peak = Math.max(peak, Math.abs(v));
-  const g = peak > 0 ? 0.8 / peak : 1;
+  const g = peak > 0 ? target / peak : 1;
   const data = Buffer.alloc(44 + buf.length * 2);
   data.write("RIFF", 0); data.writeUInt32LE(36 + buf.length * 2, 4); data.write("WAVEfmt ", 8);
   data.writeUInt32LE(16, 16); data.writeUInt16LE(1, 20); data.writeUInt16LE(1, 22);
@@ -148,4 +148,116 @@ function write(name, buf) {
   addSine(b, 0.02, 0.11, 1760, 0.4, 0.06);
   addSine(b, 0.19, 0.16, 1760, 0.4, 0.08);
   write("success.wav", b);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Visual-engine themes (Energy Reactor, Kinetic Marble Machine): 22.05 kHz mono to keep size small.
+// Original synthesis (CC0). Not recordings.
+// ---------------------------------------------------------------------------------------------
+SR = 22050;
+
+function addSweep(buf, start, dur, f0, f1, amp, shape = (x) => Math.sin(Math.PI * x) ** 0.7, expo = true) {
+  const s = Math.floor(start * SR);
+  let ph = 0;
+  for (let i = 0; i < dur * SR && s + i < buf.length; i++) {
+    const x = i / (dur * SR);
+    const f = expo ? f0 * Math.pow(f1 / f0, x) : f0 + (f1 - f0) * x;
+    ph += (2 * Math.PI * f) / SR;
+    buf[s + i] += (Math.sin(ph) * 0.7 + Math.sin(ph * 2) * 0.2 + Math.sin(ph * 3) * 0.1) * amp * shape(x);
+  }
+}
+function addNoiseBand(buf, start, dur, f0, f1, q, amp, shape = (x) => Math.sin(Math.PI * x)) {
+  const s = Math.floor(start * SR);
+  for (let i = 0; i < dur * SR && s + i < buf.length; i++) {
+    const x = i / (dur * SR);
+    const bp = bandpass(f0 * Math.pow(f1 / f0, x), q);
+    buf[s + i] += bp(rnd()) * amp * shape(x);
+  }
+}
+const decayShape = (k) => (x) => Math.min(1, x * 40) * Math.exp(-x * k);
+
+function addBoom(buf, start, amp, len = 2.4) {
+  addSine(buf, start, len, 52, amp, len / 3.2);
+  addSweep(buf, start, 0.8, 420, 55, amp * 0.8, (x) => Math.exp(-x * 3));
+  addNoiseBand(buf, start, len * 0.6, 900, 120, 0.7, amp * 0.9, decayShape(4));
+  [523, 1170, 1760].forEach((f, i) => addSine(buf, start + 0.02, len * 0.7, f, amp * 0.08 / (i + 1), len / 4));
+}
+
+// rx_pulse: soft core pulse (viewer join)
+{
+  const b = make(0.8);
+  addSine(b, 0, 0.7, 70, 0.8, 0.22);
+  addSweep(b, 0.02, 0.6, 520, 1040, 0.18, decayShape(5));
+  addNoiseBand(b, 0, 0.5, 300, 2400, 0.8, 0.12, decayShape(5));
+  write("rx_pulse.wav", b, 0.6);
+}
+// rx_charge: riser (base length 3.2 s; played faster for smaller gifts)
+{
+  const b = make(3.2);
+  addSweep(b, 0, 3.0, 60, 880, 0.55, (x) => Math.pow(x, 1.6) * Math.min(1, (1 - x) * 12 + 0.15));
+  addNoiseBand(b, 0, 3.0, 200, 3800, 1.2, 0.35, (x) => Math.pow(x, 2) * Math.min(1, (1 - x) * 14 + 0.1));
+  addHum(b, 0, 3.0, 0.18);
+  addSine(b, 2.9, 0.3, 1320, 0.12, 0.1);
+  write("rx_charge.wav", b, 0.7);
+}
+// rx_release: boom + decay
+{
+  const b = make(3.0);
+  addBoom(b, 0.02, 0.8, 2.6);
+  write("rx_release.wav", b, 0.85);
+}
+// rx_special: riser between two releases, longer tail
+{
+  const b = make(5.6);
+  addBoom(b, 0.05, 0.6, 2.0);
+  addSweep(b, 1.4, 1.3, 90, 1100, 0.4, (x) => Math.pow(x, 1.4));
+  addNoiseBand(b, 1.4, 1.3, 300, 4200, 1.2, 0.3, (x) => Math.pow(x, 2));
+  addBoom(b, 2.7, 1.0, 2.8);
+  [660, 990, 1320].forEach((f, i) => addSine(b, 3.0, 2.5, f, 0.05, 1.1 - i * 0.2));
+  write("rx_special.wav", b, 0.9);
+}
+// rx_zap: short arc crackle
+{
+  const b = make(0.3);
+  const s = Math.floor(0.0 * SR);
+  for (let i = 0; i < 0.26 * SR; i++) {
+    const t = i / SR;
+    const am = Math.abs(Math.sin(2 * Math.PI * 140 * t)) > 0.5 ? 1 : 0.25;
+    b[s + i] += rnd() * am * Math.exp(-t * 14) * Math.min(1, t * 500);
+  }
+  addSweep(b, 0, 0.18, 2400, 320, 0.25, decayShape(6));
+  write("rx_zap.wav", b, 0.6);
+}
+// mb_launch: launcher clack + gear ticks
+{
+  const b = make(0.6);
+  addSine(b, 0, 0.12, 210, 0.7, 0.04);
+  addSwish(b, 0, 0.012, 0.9);
+  addSine(b, 0.01, 0.1, 1300, 0.2, 0.025);
+  [0.17, 0.25, 0.33].forEach((t) => { addSine(b, t, 0.04, 2100, 0.18, 0.012); addSwish(b, t, 0.006, 0.35); });
+  write("mb_launch.wav", b, 0.7);
+}
+// mb_clack: ball on rail
+{
+  const b = make(0.25);
+  addSine(b, 0, 0.1, 880, 0.7, 0.03);
+  addSine(b, 0, 0.08, 1720, 0.25, 0.02);
+  addSine(b, 0, 0.06, 2430, 0.12, 0.015);
+  addSwish(b, 0, 0.008, 0.6);
+  write("mb_clack.wav", b, 0.6);
+}
+// mb_bell: struck bell bar (inharmonic partials); pitched variants via playbackRate
+{
+  const b = make(1.2);
+  [[1, 1, 0.38], [2.76, 0.5, 0.22], [5.4, 0.28, 0.13], [8.93, 0.14, 0.08]].forEach(([r, a, d]) => addSine(b, 0, 1.15, 880 * r, a * 0.6, d));
+  addSwish(b, 0, 0.006, 0.4);
+  write("mb_bell.wav", b, 0.6);
+}
+// mb_finale: swell + bell chord
+{
+  const b = make(4.0);
+  [262, 330, 392, 523].forEach((f, i) => addSweep(b, 0.1 * i, 2.5, f * 0.98, f, 0.12, (x) => Math.pow(x, 1.5) * (x > 0.96 ? (1 - x) * 25 : 1), false));
+  addNoiseBand(b, 0, 2.5, 400, 3000, 1.0, 0.18, (x) => Math.pow(x, 2.2));
+  [1, 1.26, 1.5, 2].forEach((m, k) => [[1, 1, 0.5], [2.76, 0.4, 0.28], [5.4, 0.2, 0.15]].forEach(([r, a, d]) => addSine(b, 2.55 + k * 0.05, 1.4, 660 * m * r, a * 0.18, d)));
+  write("mb_finale.wav", b, 0.8);
 }

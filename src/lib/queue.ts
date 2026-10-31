@@ -26,6 +26,8 @@ const MAX_SEEN = 5000;
 export interface QueueSerialized {
   pending: AtmEvent[];
   active: AtmEvent | null;
+  /** joins folded into the active group welcome */
+  activeExtras?: AtmEvent[];
   seen: string[];
 }
 
@@ -54,6 +56,7 @@ export class EventQueue {
   private pending: AtmEvent[] = [];
   private queuedAt = new Map<string, number>();
   private active: AtmEvent | null = null;
+  private activeExtras: AtmEvent[] = [];
   private seen = new Set<string>();
   private giftStreak = 0;
   private now: () => number;
@@ -98,12 +101,34 @@ export class EventQueue {
     if (!ev) return null;
     this.giftStreak = isGiftEvent(ev) ? this.giftStreak + 1 : 0;
     this.active = ev;
+    this.activeExtras = [];
     return ev;
+  }
+
+  /** Number of waiting viewer joins. */
+  get joinsWaiting(): number {
+    return this.pending.reduce((n, e) => n + (isGiftEvent(e) ? 0 : 1), 0);
+  }
+
+  /**
+   * Group welcome: fold up to `max` waiting joins (oldest first) into the active join so they are welcomed together.
+   * They stay "in flight" (persisted, re-queued on stop) until finish(); none is lost or processed twice.
+   */
+  takeJoins(max: number): AtmEvent[] {
+    if (!this.active || isGiftEvent(this.active)) return [];
+    const taken: AtmEvent[] = [];
+    for (let i = 0; i < this.pending.length && taken.length < max; ) {
+      if (isGiftEvent(this.pending[i]!)) i++;
+      else taken.push(this.removeAt(i)!);
+    }
+    this.activeExtras.push(...taken);
+    return taken;
   }
 
   finish(id: string): boolean {
     if (!this.active || this.active.id !== id) return false;
     this.active = null;
+    this.activeExtras = [];
     return true;
   }
 
@@ -111,16 +136,19 @@ export class EventQueue {
   abortActive(): AtmEvent | null {
     const a = this.active;
     this.active = null;
+    this.activeExtras = [];
     return a;
   }
 
   /** Controlled stop: put the active event back at the front so it is not lost. */
   requeueActive(): void {
     if (!this.active) return;
-    this.pending.unshift(this.active);
-    this.queuedAt.set(this.active.id, this.now());
+    const back = [this.active, ...this.activeExtras];
+    this.pending.unshift(...back);
+    back.forEach((e) => this.queuedAt.set(e.id, this.now()));
     this.giftStreak = 0;
     this.active = null;
+    this.activeExtras = [];
   }
 
   clearPending(): number {
@@ -143,7 +171,7 @@ export class EventQueue {
   }
 
   serialize(): QueueSerialized {
-    return { pending: [...this.pending], active: this.active, seen: [...this.seen] };
+    return { pending: [...this.pending], active: this.active, activeExtras: [...this.activeExtras], seen: [...this.seen] };
   }
 
   restore(data: QueueSerialized): void {
@@ -153,6 +181,7 @@ export class EventQueue {
     const t = this.now();
     this.pending.forEach((e) => this.queuedAt.set(e.id, t));
     this.active = null;
+    this.activeExtras = [];
   }
 
   private removeAt(i: number): AtmEvent | undefined {

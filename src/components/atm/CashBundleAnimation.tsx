@@ -6,15 +6,18 @@ interface Props {
   denom: Denomination;
   total: number;
   trayWidth: number;
+  /** horizontal shift from centre (px) — used by the special double bundle */
+  offsetX?: number;
+  delayMs?: number;
 }
 
 /** Strapped stack of notes. Strap states the total and that it is virtual. */
-export const CashBundleAnimation = memo(function CashBundleAnimation({ denom, total, trayWidth }: Props) {
+export const CashBundleAnimation = memo(function CashBundleAnimation({ denom, total, trayWidth, offsetX = 0, delayMs = BUNDLE_START_MS }: Props) {
   const style = {
-    "--x": `${(trayWidth - NOTE_W) / 2}px`,
+    "--x": `${(trayWidth - NOTE_W) / 2 + offsetX}px`,
     "--y": "30px",
     "--rot": "0deg",
-    "--delay": `${BUNDLE_START_MS / 1000}s`,
+    "--delay": `${delayMs / 1000}s`,
     "--travel": `${BUNDLE_TRAVEL_MS / 1000}s`,
     position: "absolute",
     left: 0,

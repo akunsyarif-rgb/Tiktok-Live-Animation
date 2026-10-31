@@ -15,10 +15,17 @@ export interface AudioSnapshot {
   lastError: string | null;
 }
 
+export interface PlayOpts {
+  /** playback rate (also shifts pitch). Default 1. */
+  rate?: number;
+}
+
 export interface SoundPlayer {
-  play(id: SoundId): Promise<void>;
+  play(id: SoundId, opts?: PlayOpts): Promise<void>;
   stop(): void;
 }
+
+const MAX_SFX_VOICES = 4;
 
 interface WebkitWindow extends Window {
   webkitAudioContext?: typeof AudioContext;
@@ -42,7 +49,7 @@ export class AudioEngine implements SoundPlayer {
     state: "inactive",
     volume: 0.8,
     muted: false,
-    assets: { processing: "unloaded", cash_dispense: "unloaded", gift_processing: "unloaded", premium_dispense: "unloaded", success: "unloaded" },
+    assets: Object.fromEntries(SOUND_IDS.map((id) => [id, "unloaded"])) as Record<SoundId, AssetState>,
     playing: null,
     failures: 0,
     lastError: null,
@@ -170,24 +177,58 @@ export class AudioEngine implements SoundPlayer {
   }
 
   /** Queued: resolves when this sound has ended. Never rejects. Resolves immediately when inactive. */
-  play(id: SoundId): Promise<void> {
+  play(id: SoundId, opts: PlayOpts = {}): Promise<void> {
     const gen = this.generation;
-    const run = this.tail.then(() => (gen === this.generation ? this.playNow(id) : undefined));
+    const run = this.tail.then(() => (gen === this.generation ? this.playNow(id, opts) : undefined));
     this.tail = run.catch(() => undefined);
     return run.catch(() => undefined);
+  }
+
+  private sfxVoices: { src: AudioBufferSourceNode }[] = [];
+
+  /**
+   * Fire-and-forget effect for scene cues (bell, clack, arc). NOT queued behind the main channel, but capped at
+   * MAX_SFX_VOICES (oldest voice is stolen) so it can never pile up. Silent when audio is inactive or the sample is missing.
+   */
+  playSfx(id: SoundId, opts: PlayOpts & { gain?: number } = {}): void {
+    const buf = this.buffers[id];
+    if (this.snapshot.state !== "active" || !this.ctx || !this.master || !buf || this.ctx.state !== "running") return;
+    try {
+      if (this.sfxVoices.length >= MAX_SFX_VOICES) {
+        const old = this.sfxVoices.shift();
+        try { old?.src.stop(); } catch { /* already ended */ }
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = Math.min(4, Math.max(0.25, opts.rate ?? 1));
+      const g = this.ctx.createGain();
+      g.gain.value = Math.min(1, Math.max(0, opts.gain ?? 0.8));
+      src.connect(g).connect(this.master);
+      const voice = { src };
+      this.sfxVoices.push(voice);
+      src.onended = () => {
+        this.sfxVoices = this.sfxVoices.filter((v) => v !== voice);
+        g.disconnect();
+      };
+      src.start();
+    } catch {
+      /* sfx are best-effort */
+    }
   }
 
   /** Stop current sound and drop everything queued. */
   stop(): void {
     this.generation += 1;
     this.stopCurrent?.();
+    this.sfxVoices.forEach((v) => { try { v.src.stop(); } catch { /* ended */ } });
+    this.sfxVoices = [];
   }
 
   private fail(msg: string): void {
     this.set({ failures: this.snapshot.failures + 1, lastError: msg });
   }
 
-  private async playNow(id: SoundId): Promise<void> {
+  private async playNow(id: SoundId, opts: PlayOpts): Promise<void> {
     if (this.snapshot.state !== "active" || !this.ctx || !this.master) return;
     if (this.ctx.state !== "running") {
       // iOS suspends/interrupts audio (calls, Siri, backgrounding): try to recover quietly
@@ -201,11 +242,12 @@ export class AudioEngine implements SoundPlayer {
         return;
       }
     }
-    return this.playRunning(id, this.ctx, this.master);
+    return this.playRunning(id, opts, this.ctx, this.master);
   }
 
-  private playRunning(id: SoundId, ctx: AudioContext, master: GainNode): Promise<void> {
-    const timeoutMs = AUDIO_MANIFEST[id].nominalMs + 1500;
+  private playRunning(id: SoundId, opts: PlayOpts, ctx: AudioContext, master: GainNode): Promise<void> {
+    const rate = Math.min(4, Math.max(0.25, opts.rate ?? 1));
+    const timeoutMs = AUDIO_MANIFEST[id].nominalMs / rate + 1500;
 
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- needed inside the hoisted finish() declaration
     const self = this;
@@ -228,6 +270,7 @@ export class AudioEngine implements SoundPlayer {
         if (buf) {
           const src = ctx.createBufferSource();
           src.buffer = buf;
+          src.playbackRate.value = rate;
           src.connect(master);
           src.onended = finish;
           this.stopCurrent = () => {
@@ -237,6 +280,7 @@ export class AudioEngine implements SoundPlayer {
           src.start();
         } else if (el) {
           el.currentTime = 0;
+          el.playbackRate = rate;
           el.volume = this.snapshot.muted ? 0 : this.snapshot.volume;
           el.onended = finish;
           this.stopCurrent = () => {

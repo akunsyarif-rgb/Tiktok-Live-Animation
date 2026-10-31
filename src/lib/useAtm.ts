@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AtmController } from "./controller.ts";
 import { AudioEngine } from "./audio/engine.ts";
 import { DiagLog } from "./diag.ts";
+import { DEFAULT_VISUAL, normalizeVisual, type VisualSettings } from "./levels.ts";
 
 function safeLocal(): Storage | undefined {
   try {
@@ -14,6 +15,21 @@ function safeLocal(): Storage | undefined {
 }
 
 const PREFS_KEY = "atm:prefs:v1";
+const VISUAL_KEY = "atm:visual:v1";
+
+export function loadVisual(): VisualSettings {
+  try {
+    return normalizeVisual(JSON.parse(safeLocal()?.getItem(VISUAL_KEY) ?? "{}"), DEFAULT_VISUAL);
+  } catch {
+    return DEFAULT_VISUAL;
+  }
+}
+
+export function saveVisual(v: VisualSettings): void {
+  try {
+    safeLocal()?.setItem(VISUAL_KEY, JSON.stringify(v));
+  } catch { /* private mode: setting just isn't remembered */ }
+}
 
 export function loadPrefs(): { volume: number; muted: boolean } {
   try {
@@ -42,6 +58,7 @@ export function useAtm(storageKey: string): { controller: AtmController; audio: 
     const p = loadPrefs();
     audio.setVolume(p.volume);
     audio.setMuted(p.muted);
+    controller.setVisual(loadVisual()); // after mount: no hydration mismatch
     controller.start();
     return () => controller.stop();
   }, [controller, audio]);

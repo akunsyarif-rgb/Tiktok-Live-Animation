@@ -5,6 +5,7 @@ import type { SoundPlayer } from "../src/lib/audio/engine.ts";
 import type { SoundId } from "../src/lib/audio/manifest.ts";
 import { mkEvent, until, sleep } from "./helpers.ts";
 
+const NOGROUP = { groupWelcomeAt: 50 }; // grouping has its own tests
 const FAST = { processingJoinMs: 20, processingGiftMs: 25, dispenseMinMs: 30, completeHoldMs: 15, gapMs: 5, animScale: 0.01 };
 
 /** Fake player: records start order and detects overlap. */
@@ -45,7 +46,7 @@ const memStore = () => {
 
 test("viewer join: processing → dispensing(1 note) → complete → standby; sounds in order incl. success beep", async () => {
   const a = fakeAudio();
-  const c = new AtmController({ audio: a.player, timing: FAST });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST });
   const seq = trace(c);
   c.start();
   c.enqueue(mkEvent("VIEWER_JOIN", "j1"));
@@ -57,7 +58,7 @@ test("viewer join: processing → dispensing(1 note) → complete → standby; s
 
 test("gift small → several notes, gift sounds", async () => {
   const a = fakeAudio();
-  const c = new AtmController({ audio: a.player, timing: FAST });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST });
   let notes = 0;
   c.subscribe(() => { const p = c.getSnapshot().plan; if (p) notes = Math.max(notes, p.notes.length); });
   c.start();
@@ -70,7 +71,7 @@ test("gift small → several notes, gift sounds", async () => {
 
 test("gift large → bundle of exactly 10 notes + premium sound", async () => {
   const a = fakeAudio();
-  const c = new AtmController({ audio: a.player, timing: FAST });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST });
   let plan: { kind: string; n: number } | null = null;
   c.subscribe(() => { const p = c.getSnapshot().plan; if (p) plan = { kind: p.kind, n: p.notes.length }; });
   c.start();
@@ -84,7 +85,7 @@ test("gift large → bundle of exactly 10 notes + premium sound", async () => {
 test("audio failure (play rejects) does not stop the visual transaction", async () => {
   const a = fakeAudio({ reject: true });
   const logs: string[] = [];
-  const c = new AtmController({ audio: a.player, timing: FAST, log: (_l, m) => logs.push(m) });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST, log: (_l, m) => logs.push(m) });
   const seq = trace(c);
   c.start();
   c.enqueue(mkEvent("GIFT_LARGE", "g1"));
@@ -98,7 +99,7 @@ test("audio failure (play rejects) does not stop the visual transaction", async 
 
 test("multiple queued: sequential, no overlap, none lost, gift jumps ahead of waiting joins", async () => {
   const a = fakeAudio();
-  const c = new AtmController({ audio: a.player, timing: FAST, mode: "gift-priority" });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST, mode: "gift-priority" });
   const seq = trace(c);
   c.start();
   c.enqueue(mkEvent("VIEWER_JOIN", "j1"));
@@ -119,7 +120,7 @@ test("multiple queued: sequential, no overlap, none lost, gift jumps ahead of wa
 
 test("burst of 60 events: all processed exactly once, in order of policy, no overlap", async () => {
   const a = fakeAudio({ ms: 1 });
-  const c = new AtmController({ audio: a.player, timing: { ...FAST, processingJoinMs: 1, processingGiftMs: 1, dispenseMinMs: 1, completeHoldMs: 1, gapMs: 0 }, mode: "community" });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: { ...FAST, processingJoinMs: 1, processingGiftMs: 1, dispenseMinMs: 1, completeHoldMs: 1, gapMs: 0 }, mode: "community" });
   const started: string[] = [];
   let last = "";
   c.subscribe(() => { const s = c.getSnapshot(); if (s.phase === "processing" && s.current && s.current.id !== last) { last = s.current.id; started.push(last); } });
@@ -138,7 +139,7 @@ test("burst of 60 events: all processed exactly once, in order of policy, no ove
 
 test("gift arriving mid-animation waits; active transaction is never interrupted", async () => {
   const a = fakeAudio({ ms: 40 });
-  const c = new AtmController({ audio: a.player, timing: FAST, mode: "gift-priority" });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST, mode: "gift-priority" });
   const seq = trace(c);
   c.start();
   c.enqueue(mkEvent("VIEWER_JOIN", "j1"));
@@ -154,7 +155,7 @@ test("gift arriving mid-animation waits; active transaction is never interrupted
 
 test("duplicate event processed once, also after completion", async () => {
   const a = fakeAudio();
-  const c = new AtmController({ audio: a.player, timing: FAST });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST });
   c.start();
   const e = mkEvent("VIEWER_JOIN", "dupe");
   assert.equal(c.enqueue(e), "accepted");
@@ -169,7 +170,7 @@ test("duplicate event processed once, also after completion", async () => {
 
 test("untrusted input is sanitized in the controller (bad avatar scheme, control chars, giant name)", async () => {
   const a = fakeAudio();
-  const c = new AtmController({ audio: a.player, timing: FAST });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: FAST });
   c.start();
   const bad = mkEvent("VIEWER_JOIN", "evil", { username: "x\u0000y".repeat(100), avatarUrl: "javascript:alert(1)" });
   assert.equal(c.enqueue(bad), "accepted");
@@ -183,7 +184,7 @@ test("untrusted input is sanitized in the controller (bad avatar scheme, control
 
 test("watchdog: hung audio is aborted once, queue continues, no transaction starts twice", async () => {
   const hung = fakeAudio({ hang: true });
-  const c = new AtmController({ audio: hung.player, timing: { ...FAST, watchdogMs: 60 } });
+  const c = new AtmController({ visual: NOGROUP, audio: hung.player, timing: { ...FAST, watchdogMs: 60 } });
   const starts: string[] = [];
   let last = "";
   c.subscribe(() => { const s = c.getSnapshot(); if (s.phase === "processing" && s.current && s.current.id !== last) { last = s.current.id; starts.push(last); } });
@@ -198,14 +199,14 @@ test("watchdog: hung audio is aborted once, queue continues, no transaction star
 
 test("queue recovery after reload: pending + interrupted event resume; duplicates still blocked", async () => {
   const store = memStore();
-  const c1 = new AtmController({ audio: fakeAudio({ ms: 500 }).player, timing: FAST, storage: store });
+  const c1 = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 500 }).player, timing: FAST, storage: store });
   c1.start();
   c1.enqueue(mkEvent("VIEWER_JOIN", "r1"));
   c1.enqueue(mkEvent("GIFT_SMALL", "r2"));
   await sleep(10); // r1 is mid-processing
   // simulated hard reload: no stop(), the page just disappears
   const a2 = fakeAudio();
-  const c2 = new AtmController({ audio: a2.player, timing: FAST, storage: store });
+  const c2 = new AtmController({ visual: NOGROUP, audio: a2.player, timing: FAST, storage: store });
   c2.start();
   await until(() => c2.getSnapshot().processed === 2);
   assert.equal(c2.enqueue(mkEvent("VIEWER_JOIN", "r1")), "duplicate");
@@ -215,14 +216,14 @@ test("queue recovery after reload: pending + interrupted event resume; duplicate
 
 test("reload while 'take your cash' is showing does NOT run that transaction twice", async () => {
   const store = memStore();
-  const c1 = new AtmController({ audio: fakeAudio({ ms: 5 }).player, timing: { ...FAST, completeHoldMs: 400 }, storage: store });
+  const c1 = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 5 }).player, timing: { ...FAST, completeHoldMs: 400 }, storage: store });
   c1.start();
   c1.enqueue(mkEvent("VIEWER_JOIN", "done1"));
   c1.enqueue(mkEvent("VIEWER_JOIN", "next1"));
   await until(() => c1.getSnapshot().phase === "complete");
   const a2 = fakeAudio();
   const seq: string[] = [];
-  const c2 = new AtmController({ audio: a2.player, timing: FAST, storage: store });
+  const c2 = new AtmController({ visual: NOGROUP, audio: a2.player, timing: FAST, storage: store });
   c2.subscribe(() => { const s = c2.getSnapshot(); if (s.phase === "processing" && s.current) seq.push(s.current.id); });
   c2.start();
   await until(() => c2.getSnapshot().processed === 1);
@@ -235,11 +236,11 @@ test("reload while 'take your cash' is showing does NOT run that transaction twi
 test("stale persisted queue is discarded", async () => {
   const store = memStore();
   let t = 1_000_000;
-  const c1 = new AtmController({ audio: fakeAudio({ ms: 500 }).player, timing: FAST, storage: store, now: () => t });
+  const c1 = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 500 }).player, timing: FAST, storage: store, now: () => t });
   c1.start();
   c1.enqueue(mkEvent("GIFT_LARGE", "old1"));
   t += PERSIST_MAX_AGE_MS + 1000;
-  const c2 = new AtmController({ audio: fakeAudio().player, timing: FAST, storage: store, now: () => t });
+  const c2 = new AtmController({ visual: NOGROUP, audio: fakeAudio().player, timing: FAST, storage: store, now: () => t });
   c2.start();
   await sleep(100);
   assert.equal(c2.getSnapshot().processed, 0);
@@ -249,7 +250,7 @@ test("stale persisted queue is discarded", async () => {
 
 test("stop() (e.g. React unmount) re-queues the active event instead of losing it", async () => {
   const store = memStore();
-  const c = new AtmController({ audio: fakeAudio({ ms: 200 }).player, timing: FAST, storage: store });
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 200 }).player, timing: FAST, storage: store });
   c.start();
   c.enqueue(mkEvent("VIEWER_JOIN", "s1"));
   await until(() => c.getSnapshot().phase === "processing");
@@ -263,7 +264,7 @@ test("stop() (e.g. React unmount) re-queues the active event instead of losing i
 });
 
 test("overload: joins evicted, every gift still gets its transaction, counters visible", async () => {
-  const c = new AtmController({ audio: fakeAudio({ ms: 2 }).player, timing: { ...FAST, processingJoinMs: 2, processingGiftMs: 2, dispenseMinMs: 2, completeHoldMs: 2, gapMs: 0 }, policy: { maxPending: 10 } });
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 2 }).player, timing: { ...FAST, processingJoinMs: 2, processingGiftMs: 2, dispenseMinMs: 2, completeHoldMs: 2, gapMs: 0 }, policy: { maxPending: 10 } });
   const started = new Set<string>();
   c.subscribe(() => { const s = c.getSnapshot(); if (s.current) started.add(s.current.id); });
   c.start();
@@ -273,5 +274,201 @@ test("overload: joins evicted, every gift still gets its transaction, counters v
   assert.ok(c.getSnapshot().dropped >= 29, "evictions counted");
   await until(() => c.getSnapshot().waitingTotal === 0 && c.getSnapshot().phase === "standby" && c.getSnapshot().processed >= 4, 10000);
   for (let i = 0; i < 3; i++) assert.ok(started.has(`og${i}`), `gift og${i} processed`);
+  c.stop();
+});
+
+// ---------------- themes, levels, welcome, recent visitors ----------------
+import { MARBLE_MS, REACTOR_MS } from "../src/lib/profile.ts";
+
+const gift = (id: string, diamonds: number, type: "GIFT_SMALL" | "GIFT_LARGE" = "GIFT_SMALL") =>
+  mkEvent(type, id, { gift: { name: "G", count: 1, diamonds } });
+const QUICK = { processingJoinMs: 2, processingGiftMs: 2, dispenseMinMs: 2, completeHoldMs: 2, gapMs: 0, animScale: 0.001 };
+
+test("gift hierarchy reaches the snapshot: level 1..4 from diamond value; join is level 0", async () => {
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 1 }).player, timing: QUICK });
+  const seen = new Map<string, number>();
+  c.subscribe(() => { const s = c.getSnapshot(); if (s.current) seen.set(s.current.id, s.level); });
+  c.start();
+  c.enqueue(mkEvent("VIEWER_JOIN", "l0"));
+  c.enqueue(gift("l1", 5));
+  c.enqueue(gift("l2", 120));
+  c.enqueue(gift("l3", 2500, "GIFT_LARGE"));
+  c.enqueue(gift("l4", 50000, "GIFT_LARGE"));
+  await until(() => c.getSnapshot().processed === 5, 8000);
+  assert.deepEqual([...seen.entries()].sort(), [["l0", 0], ["l1", 1], ["l2", 2], ["l3", 3], ["l4", 4]]);
+  c.stop();
+});
+
+test("gift thresholds are configurable from settings and take effect on the next gift", async () => {
+  const c = new AtmController({ visual: { ...NOGROUP, giftMediumDiamonds: 1000, giftBigDiamonds: 5000, giftSpecialDiamonds: 20000 }, audio: fakeAudio({ ms: 1 }).player, timing: QUICK });
+  const lv: number[] = [];
+  let last = "";
+  c.subscribe(() => { const s = c.getSnapshot(); if (s.current && s.current.id !== last) { last = s.current.id; lv.push(s.level); } });
+  c.start();
+  c.enqueue(gift("t1", 500));
+  await until(() => c.getSnapshot().processed === 1);
+  c.setVisual({ giftMediumDiamonds: 100, giftBigDiamonds: 400, giftSpecialDiamonds: 900 });
+  c.enqueue(gift("t2", 500));
+  await until(() => c.getSnapshot().processed === 2);
+  assert.deepEqual(lv, [1, 3]);
+  c.stop();
+});
+
+test("special gifts are rare: a second Special inside the cool-down is shown as Big; after it, Special again", async () => {
+  let clock = 1_000_000;
+  const c = new AtmController({ visual: { ...NOGROUP, specialCooldownMs: 60_000 }, audio: fakeAudio({ ms: 1 }).player, timing: QUICK, now: () => clock });
+  const lv: Record<string, number> = {};
+  c.subscribe(() => { const s = c.getSnapshot(); if (s.current) lv[s.current.id] = s.level; });
+  c.start();
+  c.enqueue(gift("sp1", 50000, "GIFT_LARGE"));
+  c.enqueue(gift("sp2", 50000, "GIFT_LARGE"));
+  await until(() => c.getSnapshot().processed === 2);
+  clock += 61_000;
+  c.enqueue(gift("sp3", 50000, "GIFT_LARGE"));
+  await until(() => c.getSnapshot().processed === 3);
+  assert.deepEqual([lv.sp1, lv.sp2, lv.sp3], [4, 3, 4]);
+  c.stop();
+});
+
+test("single viewer join: name in snapshot, welcome text source, level 0, recent visitors updated", async () => {
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 1 }).player, timing: QUICK });
+  c.start();
+  c.enqueue(mkEvent("VIEWER_JOIN", "w1", { username: "budi_s" }));
+  assert.deepEqual(c.getSnapshot().recent.map((r) => r.name), ["budi_s"], "name is recorded as soon as the event is accepted");
+  await until(() => c.getSnapshot().current?.username === "budi_s");
+  assert.equal(c.getSnapshot().level, 0);
+  assert.deepEqual(c.getSnapshot().group, []);
+  await until(() => c.getSnapshot().processed === 1);
+  c.stop();
+});
+
+test("recent visitors: newest first, no duplicates, capped at 8, gifters included", () => {
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio().player, timing: QUICK });
+  for (let i = 0; i < 12; i++) c.enqueue(mkEvent("VIEWER_JOIN", `r${i}`, { username: `user${i}` }));
+  c.enqueue(mkEvent("VIEWER_JOIN", "again", { username: "user3" }));
+  c.enqueue(gift("rg", 50, "GIFT_SMALL"));
+  const names = c.getSnapshot().recent.map((r) => r.name);
+  assert.equal(names.length, 8);
+  assert.equal(names[1], "user3");
+  assert.equal(new Set(names).size, 8);
+  assert.equal(c.getSnapshot().recent[0]!.kind, "gift");
+});
+
+test("20 joins in a row: grouped welcomes, every name shown, none lost, none processed twice", async () => {
+  const c = new AtmController({ visual: { groupWelcomeAt: 4 }, audio: fakeAudio({ ms: 1 }).player, timing: QUICK });
+  const shown = new Set<string>();
+  let transactions = 0;
+  let lastId = "";
+  c.subscribe(() => {
+    const s = c.getSnapshot();
+    if (s.current) {
+      if (s.current.id !== lastId) { lastId = s.current.id; transactions++; }
+      (s.group.length ? s.group : [s.current.username]).forEach((n) => shown.add(n));
+    }
+  });
+  c.start();
+  for (let i = 0; i < 20; i++) c.enqueue(mkEvent("VIEWER_JOIN", `g${i}`, { username: `viewer${i}` }));
+  await until(() => c.getSnapshot().processed === 20, 8000);
+  assert.equal(shown.size, 20, "every viewer name was shown");
+  assert.ok(transactions < 20, `grouped: ${transactions} transactions for 20 joins`);
+  assert.equal(c.getSnapshot().waitingTotal, 0);
+  assert.equal(c.getSnapshot().duplicates, 0);
+  c.stop();
+});
+
+test("group welcome never swallows gifts: gifts still get their own transaction", async () => {
+  const c = new AtmController({ visual: { groupWelcomeAt: 3 }, audio: fakeAudio({ ms: 1 }).player, timing: QUICK, mode: "community" });
+  const started: string[] = [];
+  let last = "";
+  c.subscribe(() => { const s = c.getSnapshot(); if (s.current && s.current.id !== last) { last = s.current.id; started.push(s.current.id); } });
+  c.start();
+  c.enqueue(mkEvent("VIEWER_JOIN", "a0"));
+  c.enqueue(mkEvent("VIEWER_JOIN", "a1"));
+  c.enqueue(gift("gg", 50));
+  c.enqueue(mkEvent("VIEWER_JOIN", "a2"));
+  c.enqueue(mkEvent("VIEWER_JOIN", "a3"));
+  await until(() => c.getSnapshot().processed === 5, 8000);
+  assert.ok(started.includes("gg"));
+  c.stop();
+});
+
+test("group welcome survives a reload mid-transaction (folded joins are restored)", async () => {
+  const store = memStore();
+  const c1 = new AtmController({ visual: { groupWelcomeAt: 3 }, audio: fakeAudio({ ms: 200 }).player, timing: FAST, storage: store });
+  c1.start();
+  for (let i = 0; i < 9; i++) c1.enqueue(mkEvent("VIEWER_JOIN", `gr${i}`, { username: `n${i}` }));
+  await until(() => c1.getSnapshot().group.length > 1, 15000, "group welcome active");
+  // hard reload: the new page only sees what was persisted at this moment
+  const frozen = memStore();
+  store.m.forEach((v, k) => frozen.m.set(k, v));
+  const doneBefore = c1.getSnapshot().processed;
+  const groupSize = c1.getSnapshot().group.length;
+  const c2 = new AtmController({ visual: { groupWelcomeAt: 50 }, audio: fakeAudio({ ms: 1 }).player, timing: FAST, storage: frozen });
+  c2.start();
+  await until(() => c2.getSnapshot().waitingTotal === 0 && c2.getSnapshot().phase === "standby" && c2.getSnapshot().processed > 0, 15000, "restored work done");
+  assert.equal(c2.getSnapshot().processed + doneBefore, 9, `${doneBefore} done before reload + ${c2.getSnapshot().processed} after = 9 (group of ${groupSize} was restored, not lost)`);
+  c1.stop();
+  c2.stop();
+});
+
+test("theme switching with a queue: active transaction finishes, the next one uses the new theme's timeline, nothing lost", async () => {
+  const T2 = { ...QUICK, animScale: 0.02 };
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 1 }).player, timing: T2 });
+  const tl: Record<string, { p: number; theme: string }> = {};
+  c.subscribe(() => { const s = c.getSnapshot(); if (s.current) tl[s.current.id] = { p: s.timeline.processingMs, theme: s.visual.theme }; });
+  c.start();
+  c.enqueue(gift("th1", 120));
+  c.enqueue(gift("th2", 120));
+  await until(() => c.getSnapshot().current?.id === "th1");
+  c.setVisual({ theme: "reactor" }); // switch while th1 is running and th2 is waiting
+  await until(() => c.getSnapshot().processed === 2, 8000);
+  assert.equal(tl.th2!.theme, "reactor");
+  assert.ok(Math.abs(tl.th2!.p - REACTOR_MS[2][0] * 0.02) < 1e-9, "second event uses the reactor level-2 timeline");
+  assert.notEqual(tl.th1!.p, tl.th2!.p);
+  c.setVisual({ theme: "marble" });
+  c.enqueue(gift("th3", 120));
+  await until(() => c.getSnapshot().processed === 3, 8000);
+  assert.ok(Math.abs(tl.th3!.p - MARBLE_MS[2][0] * 0.02) < 1e-9);
+  c.stop();
+});
+
+test("theme switching while idle is instant and does not touch the queue; invalid theme ignored", () => {
+  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio().player, timing: QUICK });
+  c.start();
+  c.setVisual({ theme: "marble" });
+  assert.equal(c.getSnapshot().visual.theme, "marble");
+  c.setVisual({ theme: "nope" as never });
+  assert.equal(c.getSnapshot().visual.theme, "marble");
+  assert.equal(c.getSnapshot().phase, "standby");
+  c.stop();
+});
+
+test("idle animation toggle is a setting only; it never blocks or reorders the queue", async () => {
+  const c = new AtmController({ visual: { ...NOGROUP, idleEnabled: false }, audio: fakeAudio({ ms: 1 }).player, timing: QUICK });
+  c.start();
+  c.enqueue(mkEvent("VIEWER_JOIN", "id1"));
+  await until(() => c.getSnapshot().processed === 1);
+  assert.equal(c.getSnapshot().visual.idleEnabled, false);
+  c.stop();
+});
+
+test("5 gifts back-to-back + big gift during animation + special after a long queue: strictly sequential, all processed once", async () => {
+  const a = fakeAudio({ ms: 1 });
+  const c = new AtmController({ visual: NOGROUP, audio: a.player, timing: QUICK, mode: "gift-priority" });
+  const starts: string[] = [];
+  let last = "";
+  c.subscribe(() => { const s = c.getSnapshot(); if (s.phase === "processing" && s.current && s.current.id !== last) { last = s.current.id; starts.push(s.current.id); } });
+  c.start();
+  for (let i = 0; i < 5; i++) c.enqueue(gift(`q${i}`, 40));
+  await until(() => c.getSnapshot().current?.id === "q0");
+  c.enqueue(gift("big", 3000, "GIFT_LARGE")); // arrives while q0 animates
+  for (let i = 0; i < 15; i++) c.enqueue(mkEvent("VIEWER_JOIN", `qj${i}`)); // long queue
+  c.enqueue(gift("grand", 90000, "GIFT_LARGE"));
+  await until(() => c.getSnapshot().processed === 22, 15000);
+  assert.equal(starts[0], "q0", "active transaction was not interrupted");
+  const firstJoin = starts.findIndex((x) => x.startsWith("qj"));
+  ["q1", "q2", "q3", "q4", "big", "grand"].forEach((g) => assert.ok(starts.indexOf(g) < firstJoin, `${g} before any waiting join (gift-priority)`));
+  assert.equal(new Set(starts).size, starts.length, "no event started twice");
+  assert.equal(a.maxConcurrent(), 1);
   c.stop();
 });
