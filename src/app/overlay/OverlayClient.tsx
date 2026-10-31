@@ -120,8 +120,7 @@ export function OverlayClient() {
 audio:${audioSnap.state}${audioSnap.muted ? " muted" : ""} vol:${Math.round(audioSnap.volume * 100)} fail:${audioSnap.failures}
 phase:${atm.phase} wait:${atm.waitingTotal} done:${atm.processed} dup:${atm.duplicates} drop:${atm.dropped}
 ` +
-            logs.slice(-8).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.msg}`).join("
-")}
+            logs.slice(-8).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.msg}`).join("\n")}
         </pre>
       )}
     </div>
