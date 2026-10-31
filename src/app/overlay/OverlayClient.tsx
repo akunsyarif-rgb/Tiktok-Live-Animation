@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AtmStage } from "../../components/atm/AtmStage.tsx";
+import { ThemeStage } from "../../components/themes/ThemeStage.tsx";
 import { StageScaler } from "../../components/atm/StageScaler.tsx";
 import { createIngest } from "../../lib/ingest.ts";
-import type { Msg } from "../../lib/protocol.ts";
+import type { Msg, ThemeId } from "../../lib/protocol.ts";
 import { resolveRoom, useLink } from "../../lib/useLink.ts";
 import { useAtm } from "../../lib/useAtm.ts";
 
@@ -21,7 +21,7 @@ export function OverlayClient() {
   const audioSnap = useSyncExternalStore(audio.subscribe, audio.getSnapshot, audio.getSnapshot);
   const atm = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const logs = useSyncExternalStore(diag.subscribe, diag.getSnapshot, diag.getSnapshot);
-  const [params, setParams] = useState({ clean: false, debug: false, bg: "" });
+  const [params, setParams] = useState({ clean: false, debug: false, bg: "" });\n  const [theme, setTheme] = useState<ThemeId>("atm");
   const [room, setRoom] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const autoAudio = useRef(false);
@@ -34,7 +34,7 @@ export function OverlayClient() {
     // browser-only state (URL / localStorage) can only be read after hydration
     /* eslint-disable react-hooks/set-state-in-effect */
     const q = new URLSearchParams(window.location.search);
-    setParams({ clean: q.get("clean") === "1", debug: q.get("debug") === "1", bg: q.get("bg") ?? "" });
+    setParams({ clean: q.get("clean") === "1", debug: q.get("debug") === "1", bg: q.get("bg") ?? "" });\n    const requestedTheme = q.get("theme");\n    setTheme(requestedTheme === "reactor" || requestedTheme === "marble" ? requestedTheme : "atm");
     setRoom(resolveRoom(false));
     setReady(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -100,7 +100,7 @@ export function OverlayClient() {
   return (
     <div style={{ position: "fixed", inset: 0, background: bg }}>
       <StageScaler>
-        <AtmStage controller={controller} />
+        <ThemeStage controller={controller} theme={theme} />
       </StageScaler>
       {audioSnap.state !== "active" && !params.clean && (
         <button
