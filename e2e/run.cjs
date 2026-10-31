@@ -242,6 +242,13 @@ async function themeSuite(browser) {
         new Promise((r) => setTimeout(() => r("PAGE UNRESPONSIVE (evaluate hung 5 s)"), 5000)),
       ]).catch((e) => "evaluate error " + e.message);
       console.log("DIAG hud failed:", probe, "| errors:", JSON.stringify(errors.slice(0, 3)));
+      try { // where is the main thread? (JS frames if it is running script; none if stuck in a native/GPU call)
+        const cdp = await o.context().newCDPSession(o);
+        await cdp.send("Debugger.enable");
+        const paused = new Promise((r) => cdp.once("Debugger.paused", (e) => r(e.callFrames.slice(0, 8).map((f) => `${f.functionName || "(anon)"} ${f.url.split("/").slice(-2).join("/")}:${f.location.lineNumber}`).join(" <- "))));
+        await cdp.send("Debugger.pause");
+        console.log("DIAG main-thread stack:", await Promise.race([paused, new Promise((r) => setTimeout(() => r("NO JS FRAMES within 6 s (native/GPU stall, not running script)"), 6000))]));
+      } catch (e2) { console.log("DIAG cdp failed", e2.message); }
       await o.screenshot({ path: path.join(OUT, "diag-hud-failed.png"), timeout: 5000 }).catch(() => {});
       throw err;
     }
