@@ -224,6 +224,14 @@ async function themeSuite(browser) {
   const ctx = await browser.newContext({ viewport: IPAD });
   const external = new Set();
   ctx.on("request", (r) => { const u = new URL(r.url()); if (!["127.0.0.1", "localhost"].includes(u.hostname) && u.protocol.startsWith("http")) external.add(u.hostname); });
+  await ctx.addInitScript(() => { // count BroadcastChannel traffic per message type (diagnostics)
+    const Orig = window.BroadcastChannel;
+    const stats = (window.__bc = { rx: {}, tx: {} });
+    window.BroadcastChannel = class extends Orig {
+      constructor(n) { super(n); this.addEventListener("message", (e) => { const t = e.data && e.data.t; stats.rx[t] = (stats.rx[t] || 0) + 1; }); }
+      postMessage(m) { const t = m && m.t; stats.tx[t] = (stats.tx[t] || 0) + 1; return super.postMessage(m); }
+    };
+  });
   const c = await ctx.newPage();
   watchErrors(c, "control", errors, ign);
   await c.goto(`${base}/control`);
@@ -365,7 +373,12 @@ async function themeSuite(browser) {
     await o.screenshot({ path: path.join(OUT, "diag-blank-overlay.png") }).catch(() => {});
   }
   const geo0 = (await counts())[0], h0 = await heap();
-  for (let i = 0; i < 4; i++) for (const t of ["marble", "reactor", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await o.waitForTimeout(350); }
+  const bc = async (pg) => JSON.stringify(await pg.evaluate(() => window.__bc));
+  console.log("DIAG bc before cycles  control:", await bc(c), " overlay:", await bc(o));
+  for (let i = 0; i < 4; i++) {
+    for (const t of ["marble", "reactor", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await o.waitForTimeout(350); }
+    console.log(`DIAG bc after cycle ${i + 1} control:`, await bc(c).catch(() => "hung"), " overlay:", await Promise.race([bc(o), new Promise((r) => setTimeout(() => r("hung"), 4000))]));
+  }
   await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(2500);
   const [geo1] = await counts();
   const canv = await o.evaluate(() => document.querySelectorAll("canvas").length);
