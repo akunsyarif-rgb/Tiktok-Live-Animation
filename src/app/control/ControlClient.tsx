@@ -180,7 +180,8 @@ export function ControlClient() {
         `remote: ${REMOTE.ok ? link.remote : `disabled (${REMOTE.reason})`} local: ${link.local} room: ${room ? room.slice(0, 4) + "…" : "none"}`,
         `audio: ${localAudio.state} failures:${localAudio.failures} lastError:${localAudio.lastError ?? "-"}`,
         `overlay: ${overlayConnected ? "connected" : "not detected"} listener: ${listenerSeen ? listener?.status.state : "not detected"}`,
-      ].join("\n"),
+      ].join("
+"),
     );
 
   const view = useOverlay && overlay ? overlay.status.atm : local;
@@ -195,7 +196,14 @@ export function ControlClient() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid min-w-0 gap-4">
-          <Panel title="Visual theme">\n            <div className="grid grid-cols-3 gap-2">\n              {([{id:"atm",label:"ATM"},{id:"reactor",label:"Energy Reactor"},{id:"marble",label:"Marble Machine"}] as {id:ThemeId;label:string}[]).map((t) => <button key={t.id} onClick={() => update({ theme: t.id })} aria-pressed={settings.theme === t.id} className={`${btn} ${settings.theme === t.id ? "bg-[#2f7d4a] text-white" : "bg-[#3a4047]"}`}>{t.label}</button>)}\n            </div>\n            <p className="mt-2 text-xs text-white/60">Tema diterapkan ke preview dan overlay yang terhubung.</p>\n          </Panel>\n\n          <Panel title="Audio">
+          <Panel title="Visual theme">
+            <div className="grid grid-cols-3 gap-2">
+              {([{id:"atm",label:"ATM"},{id:"reactor",label:"Energy Reactor"},{id:"marble",label:"Marble Machine"}] as {id:ThemeId;label:string}[]).map((t) => <button key={t.id} onClick={() => update({ theme: t.id })} aria-pressed={settings.theme === t.id} className={`${btn} ${settings.theme === t.id ? "bg-[#2f7d4a] text-white" : "bg-[#3a4047]"}`}>{t.label}</button>)}
+            </div>
+            <p className="mt-2 text-xs text-white/60">Tema diterapkan ke preview dan overlay yang terhubung.</p>
+          </Panel>
+
+          <Panel title="Audio">
             <div className="flex flex-wrap items-center gap-3">
               <button className={`${btn} bg-[#2f7d4a] text-white`} onClick={() => void audio.activate()} disabled={audioActive}>
                 {audioActive ? "Audio Active ✓" : "Activate Audio"}
@@ -325,7 +333,8 @@ export function ControlClient() {
               <button className={small} onClick={() => void copy("diagnostics copied (secrets redacted)", diagText())}>Copy diagnostics</button>
             </div>
             <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-2 text-[11px] leading-snug text-white/70" aria-label="Diagnostics log">
-              {logs.length === 0 ? "no entries" : logs.slice(-40).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.level} ${l.msg}`).join("\n")}
+              {logs.length === 0 ? "no entries" : logs.slice(-40).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.level} ${l.msg}`).join("
+")}
             </pre>
           </Panel>
         </div>
