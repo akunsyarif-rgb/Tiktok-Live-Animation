@@ -433,10 +433,11 @@ async function themeSuite(browser) {
   // --- overlay reload (reconnect) mid-queue: nothing repeated, nothing lost ---
   await c.getByTestId("theme-reactor").click();
   await o.waitForTimeout(800);
-  for (let i = 0; i < 4; i++) await c.getByRole("button", { name: /^Gift Small/ }).click();
   const doneOf = async () => { const m = /done:(\d+)/.exec(await hud()); return m ? +m[1] : 0; };
-  await o.waitForFunction(() => /done:1/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
-  const doneBefore = await doneOf();
+  const base0 = await doneOf(); // the overlay HUD counter is cumulative since page load
+  for (let i = 0; i < 4; i++) await c.getByRole("button", { name: /^Gift Small/ }).click();
+  await o.waitForFunction((b) => { const m = /done:(\d+)/.exec(document.querySelector("pre")?.textContent ?? ""); return m && +m[1] >= b + 1; }, base0, { timeout: 60000 });
+  const doneBefore = (await doneOf()) - base0;
   await o.reload();
   await o.waitForTimeout(1500);
   await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 90000 });
