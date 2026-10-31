@@ -233,7 +233,19 @@ async function themeSuite(browser) {
   watchErrors(o, "overlay", errors, ign);
   await o.goto(`${base}/overlay?bg=dark&clean=1&debug=1`);
   await o.waitForTimeout(900);
-  const hud = async () => (await o.locator("pre").innerText());
+  const hud = async () => {
+    try {
+      return await o.locator("pre").innerText({ timeout: 8000 });
+    } catch (err) {
+      const probe = await Promise.race([
+        o.evaluate(() => JSON.stringify({ url: location.href, ready: document.readyState, bodyLen: document.body.innerText.length, pre: document.querySelectorAll("pre").length, canvases: document.querySelectorAll("canvas").length, text: document.body.innerText.slice(0, 160) })),
+        new Promise((r) => setTimeout(() => r("PAGE UNRESPONSIVE (evaluate hung 5 s)"), 5000)),
+      ]).catch((e) => "evaluate error " + e.message);
+      console.log("DIAG hud failed:", probe, "| errors:", JSON.stringify(errors.slice(0, 3)));
+      await o.screenshot({ path: path.join(OUT, "diag-hud-failed.png"), timeout: 5000 }).catch(() => {});
+      throw err;
+    }
+  };
   const waitStandby = async (ms = 90000) => c.waitForFunction(() => document.querySelector("[data-testid=phase]")?.textContent.trim() === "standby" && document.querySelector("[data-testid=waiting]")?.textContent.trim() === "0", null, { timeout: ms });
   const processed = async () => num(c, "processed");
   await c.waitForFunction(() => document.querySelector("[data-testid=overlay-status]")?.textContent.includes("connected"), null, { timeout: 15000 });
