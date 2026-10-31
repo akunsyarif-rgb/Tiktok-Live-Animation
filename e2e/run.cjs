@@ -339,6 +339,12 @@ async function themeSuite(browser) {
   const heap = async () => o.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize / 1048576 : 0));
   const counts = async () => { const h = await hud(); const m = /geo:(\d+) tex:(\d+)/.exec(h); return m ? [+m[1], +m[2]] : [0, 0]; };
   await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(1500);
+  if ((await o.locator("pre").count()) !== 1) {
+    // diagnostic for the overlay going blank
+    console.log("DIAG overlay has no HUD. errors so far:", JSON.stringify(errors.slice(0, 5)), "url:", o.url(), "closed:", o.isClosed());
+    console.log("DIAG body:", (await o.locator("body").innerText().catch((e) => "ERR " + e.message)).slice(0, 300).replace(/\n/g, " | "));
+    await o.screenshot({ path: path.join(OUT, "diag-blank-overlay.png") }).catch(() => {});
+  }
   const geo0 = (await counts())[0], h0 = await heap();
   for (let i = 0; i < 4; i++) for (const t of ["marble", "reactor", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await o.waitForTimeout(350); }
   await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(2500);
