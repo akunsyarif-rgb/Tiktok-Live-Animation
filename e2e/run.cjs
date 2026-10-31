@@ -529,6 +529,7 @@ async function remoteSuite(browser, phoenix) {
     await waitHttp(`http://127.0.0.1:${PORT_REMOTE}/control`);
     await remoteSuite(browser, phoenix);
   } catch (e) {
+    console.log("STACK:", String(e && e.stack || e).split("\n").filter((l) => /run\.cjs/.test(l)).slice(0, 4).join(" | "));
     check("E2E runner completed without crashing", false, String(e && e.stack || e).split("\n").slice(0, 3).join(" | "));
   } finally {
     await browser.close();
