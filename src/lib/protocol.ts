@@ -7,7 +7,10 @@ import type { AudioSnapshot } from "./audio/engine.ts";
 export const PROTOCOL_VERSION = 1;
 const MAX_MESSAGE_CHARS = 16_000;
 
+export type ThemeId = "atm" | "reactor" | "marble";
+
 export interface Settings {
+  theme: ThemeId;
   mode: QueueMode;
   hybridGiftBurst: number;
   hybridMaxJoinWaitMs: number;
@@ -54,7 +57,9 @@ export function parseSettings(s: unknown): Settings | null {
   const o = s as Record<string, unknown>;
   if (typeof o.mode !== "string" || !MODES.includes(o.mode)) return null;
   if (!num(o.volume) || !num(o.hybridGiftBurst) || !num(o.hybridMaxJoinWaitMs)) return null;
+  const theme = o.theme === "reactor" || o.theme === "marble" ? o.theme : "atm";
   return {
+    theme,
     mode: o.mode as QueueMode,
     hybridGiftBurst: clamp(Math.round(o.hybridGiftBurst), 1, 20),
     hybridMaxJoinWaitMs: clamp(Math.round(o.hybridMaxJoinWaitMs), 3000, 300_000),
