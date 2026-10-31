@@ -21,7 +21,8 @@ export function OverlayClient() {
   const audioSnap = useSyncExternalStore(audio.subscribe, audio.getSnapshot, audio.getSnapshot);
   const atm = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const logs = useSyncExternalStore(diag.subscribe, diag.getSnapshot, diag.getSnapshot);
-  const [params, setParams] = useState({ clean: false, debug: false, bg: "" });\n  const [theme, setTheme] = useState<ThemeId>("atm");
+  const [params, setParams] = useState({ clean: false, debug: false, bg: "" });
+  const [theme, setTheme] = useState<ThemeId>("atm");
   const [room, setRoom] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const autoAudio = useRef(false);
@@ -34,7 +35,9 @@ export function OverlayClient() {
     // browser-only state (URL / localStorage) can only be read after hydration
     /* eslint-disable react-hooks/set-state-in-effect */
     const q = new URLSearchParams(window.location.search);
-    setParams({ clean: q.get("clean") === "1", debug: q.get("debug") === "1", bg: q.get("bg") ?? "" });\n    const requestedTheme = q.get("theme");\n    setTheme(requestedTheme === "reactor" || requestedTheme === "marble" ? requestedTheme : "atm");
+    setParams({ clean: q.get("clean") === "1", debug: q.get("debug") === "1", bg: q.get("bg") ?? "" });
+    const requestedTheme = q.get("theme");
+    setTheme(requestedTheme === "reactor" || requestedTheme === "marble" ? requestedTheme : "atm");
     setRoom(resolveRoom(false));
     setReady(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -113,8 +116,12 @@ export function OverlayClient() {
       )}
       {params.debug && (
         <pre style={{ position: "fixed", left: 4, top: 4, margin: 0, padding: 6, maxWidth: "60vw", maxHeight: "40vh", overflow: "hidden", background: "rgba(0,0,0,.75)", color: "#9fe3b4", font: "10px/1.3 ui-monospace, monospace", whiteSpace: "pre-wrap" }}>
-          {`local:${link.local} remote:${link.remote}${link.remoteReason ? ` (${link.remoteReason})` : ""} room:${room ? room.slice(0, 4) + "…" : "none"}\naudio:${audioSnap.state}${audioSnap.muted ? " muted" : ""} vol:${Math.round(audioSnap.volume * 100)} fail:${audioSnap.failures}\nphase:${atm.phase} wait:${atm.waitingTotal} done:${atm.processed} dup:${atm.duplicates} drop:${atm.dropped}\n` +
-            logs.slice(-8).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.msg}`).join("\n")}
+          {`local:${link.local} remote:${link.remote}${link.remoteReason ? ` (${link.remoteReason})` : ""} room:${room ? room.slice(0, 4) + "…" : "none"}
+audio:${audioSnap.state}${audioSnap.muted ? " muted" : ""} vol:${Math.round(audioSnap.volume * 100)} fail:${audioSnap.failures}
+phase:${atm.phase} wait:${atm.waitingTotal} done:${atm.processed} dup:${atm.duplicates} drop:${atm.dropped}
+` +
+            logs.slice(-8).map((l) => `${new Date(l.t).toLocaleTimeString()} ${l.msg}`).join("
+")}
         </pre>
       )}
     </div>
