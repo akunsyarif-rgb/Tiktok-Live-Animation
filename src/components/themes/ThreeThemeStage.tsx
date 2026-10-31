@@ -55,7 +55,9 @@ export function ThreeThemeStage({ controller, audio, theme, paused, fpsCap, expo
       setGl("fallback");
       return;
     }
-    (async () => {
+    // debounce: flipping through themes quickly must not build (and immediately tear down) a WebGL context per click
+    const startTimer = setTimeout(() => void start(), 150);
+    const start = async () => {
       try {
         const [hostMod, factory] = await Promise.all([
           import("../../visual/host.ts"),
@@ -83,9 +85,10 @@ export function ThreeThemeStage({ controller, audio, theme, paused, fpsCap, expo
         visualStats.set({ webgl: "unavailable" });
         if (!cancelled) setGl("fallback");
       }
-    })();
+    };
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
       host?.dispose();
       host = null;
       if (expose) delete (window as unknown as { __visual?: TestHook }).__visual;

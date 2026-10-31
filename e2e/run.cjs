@@ -376,7 +376,12 @@ async function themeSuite(browser) {
   const bc = async (pg) => JSON.stringify(await pg.evaluate(() => window.__bc));
   console.log("DIAG bc before cycles  control:", await bc(c), " overlay:", await bc(o));
   for (let i = 0; i < 4; i++) {
-    for (const t of ["marble", "reactor", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await o.waitForTimeout(350); }
+    for (const t of ["marble", "reactor", "atm", "reactor"]) {
+      await c.getByTestId(`theme-${t}`).click();
+      // wait until the new theme is really up (3D: gl:ok + frames; ATM: body present) like a real operator would
+      await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`) && (t === "atm" ? !!document.querySelector("[data-testid=atm-body]") : /gl:ok/.test(document.querySelector("pre").textContent) && !!document.querySelector("canvas")), t, { timeout: 60000 });
+      await o.waitForTimeout(250);
+    }
     console.log(`DIAG bc after cycle ${i + 1} control:`, await bc(c).catch(() => "hung"), " overlay:", await Promise.race([bc(o), new Promise((r) => setTimeout(() => r("hung"), 4000))]));
   }
   await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(2500);
