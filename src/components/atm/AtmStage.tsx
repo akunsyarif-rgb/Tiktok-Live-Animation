@@ -1,6 +1,9 @@
 "use client";
 
-import { useSyncExternalStore, memo } from "react";
+import { useEffect, useState, useSyncExternalStore, memo } from "react";
+import { Backdrop } from "./Backdrop.tsx";
+import { AmbientHud } from "./AmbientHud.tsx";
+import { hashSeed } from "../../lib/levels.ts";
 import type { AtmController, AtmSnapshot } from "../../lib/controller.ts";
 import { ATMBody, type LedMode } from "./ATMBody.tsx";
 import { ATMScreen } from "./ATMScreen.tsx";
@@ -44,9 +47,23 @@ export function AtmStage({ controller }: { controller: AtmController }) {
   const dispensing = snap.phase === "dispensing" || snap.phase === "complete";
   const active = snap.phase !== "standby";
   const ledMode: LedMode = !active ? "idle" : snap.level >= 2 ? "fast" : "work";
+  // idle never repeats mechanically: every ~16 s the LED pattern changes (chase / ping-pong / random sparkle), seeded so tests are stable
+  const [cycle, setCycle] = useState(0);
+  const idleLive = snap.visual.idleEnabled && !active;
+  useEffect(() => {
+    if (!idleLive) return;
+    const id = setInterval(() => setCycle((c) => c + 1), 16_000);
+    return () => clearInterval(id);
+  }, [idleLive]);
+  const kind = hashSeed("led" + cycle) % 3;
+  const ledPattern = Array.from({ length: 8 }, (_, i) => (kind === 0 ? i / 8 : kind === 1 ? Math.abs(i - 3.5) / 4 : (hashSeed(`s${cycle}:${i}`) % 100) / 100));
   return (
     <div style={{ position: "relative", width: STAGE_W, height: STAGE_H }}>
-      <ATMBody ledMode={ledMode} still={!snap.visual.idleEnabled}>
+      <Backdrop mode={snap.visual.backdrop} />
+      <AmbientHud a={snap.ambient} />
+      {/* the machine is scaled to leave the top strip for the ambient lane (comments / likes / follows) */}
+      <div style={{ position: "absolute", inset: 0, transformOrigin: "50% 100%", transform: "translateY(-6px) scale(0.84)" }}>
+      <ATMBody ledMode={ledMode} ledPattern={ledPattern} still={!snap.visual.idleEnabled}>
         <ATMScreen>
           <TransactionDisplay phase={snap.phase} event={snap.current} plan={snap.plan} runKey={snap.runKey} level={snap.level} group={snap.group} recent={snap.visual.showRecent ? snap.recent : []} />
         </ATMScreen>
@@ -61,6 +78,7 @@ export function AtmStage({ controller }: { controller: AtmController }) {
           UANG HIBURAN VIRTUAL · BUKAN ALAT PEMBAYARAN YANG SAH
         </div>
       </ATMBody>
+      </div>
     </div>
   );
 }

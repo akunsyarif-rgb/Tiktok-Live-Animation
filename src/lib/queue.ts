@@ -1,7 +1,7 @@
 import type { AtmEvent } from "./events.ts";
 
 export type QueueMode = "community" | "gift-priority" | "hybrid";
-export type EnqueueResult = "accepted" | "duplicate" | "invalid" | "dropped";
+export type EnqueueResult = "accepted" | "duplicate" | "invalid" | "dropped" | "filtered";
 
 export interface QueuePolicy {
   /** Hybrid: a waiting join is served after this many consecutive gifts. */
@@ -92,6 +92,16 @@ export class EventQueue {
     this.pending.push(e);
     this.queuedAt.set(e.id, this.now());
     return "accepted";
+  }
+
+  /** Idempotency for events that never enter the queue (ambient lane): false when the id was seen before. */
+  claim(id: string): boolean {
+    if (this.seen.has(id)) {
+      this.duplicates += 1;
+      return false;
+    }
+    this.remember(id);
+    return true;
   }
 
   next(): AtmEvent | null {

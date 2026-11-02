@@ -79,7 +79,7 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 
 /* ---------- ATM idle / indicator lights ---------- */
 @keyframes led-chase { 0%, 100% { opacity: .15 } 12% { opacity: 1 } 30% { opacity: .15 } }
-.atm-leds i { display: block; width: 14px; height: 6px; border-radius: 2px; background: #3fd16e; opacity: .15; animation: led-chase var(--chase, 4s) linear infinite; animation-delay: calc(var(--i) * var(--chase, 4s) / 8); }
+.atm-leds i { display: block; width: 14px; height: 6px; border-radius: 2px; background: #3fd16e; opacity: .15; animation: led-chase var(--chase, 4s) linear infinite; animation-delay: calc(var(--p, 0) * var(--chase, 4s)); }
 .atm-leds[data-mode="work"] { --chase: 1.2s; }
 .atm-leds[data-mode="fast"] { --chase: .6s; }
 .atm-leds[data-mode="fast"] i { background: #f0b34a; }
@@ -94,3 +94,10 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 @keyframes special-border { 0%, 100% { box-shadow: inset 0 0 0 2px rgba(63,209,110,.2) } 50% { box-shadow: inset 0 0 0 2px rgba(240,179,74,.9) } }
 .special-screen { animation: special-border 1s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .atm-leds i, .idle-msg, .atm-idle-mech, .special-screen, .fb-ring, .fb-core, .fb-ball, .fb-gear { animation: none; } }
+
+/* luxury finish: slow glass-like gloss sweep over the chassis (transform only) */
+.atm-metal { overflow: hidden; }
+.atm-metal::after { content: ""; position: absolute; inset: -20% -60%; pointer-events: none; background: linear-gradient(105deg, rgba(255,255,255,0) 42%, rgba(255,246,225,.10) 50%, rgba(255,255,255,0) 58%); animation: gloss 22s ease-in-out infinite; }
+@keyframes gloss { 0%, 55% { transform: translateX(-40%) } 100% { transform: translateX(40%) } }
+.atm-still.atm-metal::after { animation: none; }
+@media (prefers-reduced-motion: reduce) { .atm-metal::after, .hud-in, .blink, .progress-bar { animation: none; } .blink { opacity: 1; } }

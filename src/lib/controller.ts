@@ -1,5 +1,7 @@
 import type { AtmEvent } from "./events.ts";
-import { sanitizeEvent } from "./events.ts";
+import { isMainLane, sanitizeEvent } from "./events.ts";
+import { AmbientDirector, type AmbientOptions, type AmbientSnapshot } from "./director.ts";
+import { DEFAULT_RULES, RulesEngine, normalizeRules, type RulesConfig } from "./rules.ts";
 import { planDispense, type DispensePlan } from "./dispense.ts";
 import { DEFAULT_VISUAL, levelOf, normalizeVisual, type GiftLevel, type VisualSettings } from "./levels.ts";
 import { profileFor, type Profile } from "./profile.ts";
@@ -58,6 +60,11 @@ export interface AtmSnapshot {
   dropped: number;
   /** visual theme + settings: ONE source of truth shared by control, overlay and every renderer */
   visual: VisualSettings;
+  rules: RulesConfig;
+  /** ambient lane (comments, likes, follows, shares): independent of the ATM transaction queue */
+  ambient: AmbientSnapshot;
+  /** event pipeline counters since start */
+  pipeline: { received: number; filtered: number; ambient: number };
   level: GiftLevel;
   /** group welcome: all names welcomed together (current included, first). Empty when not a group. */
   group: string[];
@@ -83,6 +90,8 @@ export interface ControllerOptions {
   mode?: QueueMode;
   policy?: Partial<QueuePolicy>;
   visual?: Partial<VisualSettings>;
+  rules?: Partial<RulesConfig>;
+  ambient?: AmbientOptions;
   timing?: Partial<Timing>;
   /** When set, the queue is mirrored here so a reload resumes pending events. */
   storage?: StorageLike;
@@ -126,6 +135,12 @@ export class AtmController {
   private processed = 0;
   private recovered = 0;
   private visual: VisualSettings;
+  private rules: RulesEngine;
+  private ambient: AmbientDirector;
+  private ambientTimer: ReturnType<typeof setTimeout> | null = null;
+  private received = 0;
+  private filtered = 0;
+  private ambientAccepted = 0;
   private level: GiftLevel = 0;
   private group: string[] = [];
   private recent: RecentItem[] = [];
@@ -144,6 +159,9 @@ export class AtmController {
     this.storageKey = `atm:${opts.storageKey ?? "queue"}:v2`;
     this.log = opts.log ?? (() => undefined);
     this.visual = normalizeVisual(opts.visual ?? {}, DEFAULT_VISUAL);
+    const rc = normalizeRules(opts.rules ?? {}, DEFAULT_RULES);
+    this.rules = new RulesEngine(rc, this.now);
+    this.ambient = new AmbientDirector({ now: this.now, likeWindowMs: rc.likeWindowMs, ...opts.ambient });
     this.snapshot = this.build("standby", null, null);
   }
 
@@ -168,6 +186,7 @@ export class AtmController {
     this.tx?.abort("stop");
     this.timers.forEach(clearTimeout);
     this.timers.clear();
+    this.ambientTimer = null;
     this.audio.stop();
   }
 
@@ -178,6 +197,8 @@ export class AtmController {
       this.log("warn", "event rejected: invalid");
       return "invalid";
     }
+    this.received += 1;
+    if (!isMainLane(clean.type)) return this.ingestAmbient(clean);
     const evictedBefore = this.queue.evicted;
     const res = this.queue.enqueue(clean);
     if (this.queue.evicted > evictedBefore) this.log("warn", "queue full: oldest waiting join evicted");
@@ -190,6 +211,51 @@ export class AtmController {
     this.publish();
     if (res === "accepted") void this.pump();
     return res;
+  }
+
+  /** Ambient lane: dedupe → rules → director. Never enters the transaction queue. */
+  private ingestAmbient(ev: AtmEvent): EnqueueResult {
+    if (!this.queue.claim(ev.id)) {
+      this.log("info", `duplicate ignored ${ev.id}`);
+      this.publish();
+      return "duplicate";
+    }
+    const d = this.rules.evaluate(ev);
+    if (d.action === "filter") {
+      this.filtered += 1;
+      this.log("info", `${ev.type} filtered (${d.reason}) @${ev.username}`);
+      this.publish();
+      return "filtered";
+    }
+    this.ambientAccepted += 1;
+    this.ambient.ingest(d.ev);
+    this.log("info", `${d.ev.type} shown @${d.ev.username}`);
+    this.scheduleAmbient();
+    this.publish();
+    return "accepted";
+  }
+
+  private scheduleAmbient(): void {
+    if (this.ambientTimer) {
+      clearTimeout(this.ambientTimer);
+      this.timers.delete(this.ambientTimer);
+      this.ambientTimer = null;
+    }
+    const w = this.ambient.nextWake();
+    if (w === null) return;
+    this.ambientTimer = this.later(() => {
+      this.ambientTimer = null;
+      this.ambient.tick(this.now());
+      this.publish();
+      this.scheduleAmbient();
+    }, Math.max(30, w - this.now()));
+  }
+
+  setRules(patch: Partial<RulesConfig>): void {
+    const cfg = normalizeRules({ ...this.rules.cfg, ...patch }, this.rules.cfg);
+    this.rules.setConfig(cfg);
+    this.ambient.likeWindowMs = cfg.likeWindowMs;
+    this.publish();
   }
 
   setMode(mode: QueueMode): void {
@@ -206,7 +272,6 @@ export class AtmController {
   setVisual(patch: Partial<VisualSettings>): void {
     const prev = this.visual;
     this.visual = normalizeVisual({ ...prev, ...patch }, prev);
-    if (this.visual.theme !== prev.theme) this.log("info", `theme → ${this.visual.theme}`);
     this.publish();
   }
 
@@ -281,7 +346,7 @@ export class AtmController {
 
     const level = this.levelFor(ev);
     const plan = planDispense(ev, level);
-    const prof: Profile = profileFor(this.visual.theme, level, plan, this.timing, this.visual.welcomeMs);
+    const prof: Profile = profileFor(level, plan, this.timing, this.visual.welcomeMs);
     this.level = level;
     this.group = extras.length ? [ev.username, ...extras.map((e) => e.username)] : [];
     this.timeline = { processingMs: prof.processingMs, mainMs: prof.mainMs, holdMs: prof.holdMs };
@@ -290,7 +355,7 @@ export class AtmController {
     let completed = false;
     try {
       this.runKey += 1;
-      this.log("info", `start L${level} ${ev.type} @${ev.username}${extras.length ? ` +${extras.length}` : ""} [${this.visual.theme}]`);
+      this.log("info", `start L${level} ${ev.type} @${ev.username}${extras.length ? ` +${extras.length}` : ""}`);
       this.phaseStartedAt = Date.now();
       this.publish("processing", ev, plan);
       await this.guard(Promise.all([this.playCues(prof.proc), this.sleep(prof.processingMs, tx)]), tx);
@@ -370,6 +435,9 @@ export class AtmController {
       recovered: this.recovered,
       dropped: this.queue.evicted + this.queue.rejected,
       visual: this.visual,
+      rules: this.rules.cfg,
+      ambient: this.ambient.snapshot(),
+      pipeline: { received: this.received, filtered: this.filtered, ambient: this.ambientAccepted },
       level: this.level,
       group: this.group,
       recent: this.recent,

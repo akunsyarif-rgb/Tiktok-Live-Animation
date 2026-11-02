@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { AtmController } from "./controller.ts";
 import { AudioEngine } from "./audio/engine.ts";
 import { DiagLog } from "./diag.ts";
-import { DEFAULT_VISUAL, normalizeVisual, type VisualSettings } from "./levels.ts";
+import { DEFAULT_SETTINGS, parseSettings, type Settings } from "./protocol.ts";
 
 function safeLocal(): Storage | undefined {
   try {
@@ -14,39 +14,31 @@ function safeLocal(): Storage | undefined {
   }
 }
 
-const PREFS_KEY = "atm:prefs:v1";
-const VISUAL_KEY = "atm:visual:v1";
+const SETTINGS_KEY = "atm:settings:v2";
 
-export function loadVisual(): VisualSettings {
+/** Every setting (mode, policy, volume, visual, rules) lives in ONE record, so an overlay that reloads without the control page
+ *  open (autonomous LIVE) comes back exactly as configured. */
+export function loadSettings(): Settings {
   try {
-    return normalizeVisual(JSON.parse(safeLocal()?.getItem(VISUAL_KEY) ?? "{}"), DEFAULT_VISUAL);
+    return parseSettings(JSON.parse(safeLocal()?.getItem(SETTINGS_KEY) ?? "null")) ?? DEFAULT_SETTINGS;
   } catch {
-    return DEFAULT_VISUAL;
+    return DEFAULT_SETTINGS;
   }
 }
 
-export function saveVisual(v: VisualSettings): void {
+export function saveSettings(s: Settings): void {
   try {
-    safeLocal()?.setItem(VISUAL_KEY, JSON.stringify(v));
-  } catch { /* private mode: setting just isn't remembered */ }
+    safeLocal()?.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch { /* private mode: not remembered */ }
 }
 
-export function loadPrefs(): { volume: number; muted: boolean } {
-  try {
-    const p = JSON.parse(safeLocal()?.getItem(PREFS_KEY) ?? "{}") as { volume?: unknown; muted?: unknown };
-    return {
-      volume: typeof p.volume === "number" && p.volume >= 0 && p.volume <= 1 ? p.volume : 0.8,
-      muted: p.muted === true,
-    };
-  } catch {
-    return { volume: 0.8, muted: false };
-  }
-}
-
-export function savePrefs(p: { volume: number; muted: boolean }): void {
-  try {
-    safeLocal()?.setItem(PREFS_KEY, JSON.stringify(p));
-  } catch { /* private mode: preference just isn't remembered */ }
+export function applySettings(s: Settings, controller: AtmController, audio: AudioEngine): void {
+  audio.setVolume(s.volume);
+  audio.setMuted(s.muted);
+  controller.setMode(s.mode);
+  controller.setPolicy({ hybridGiftBurst: s.hybridGiftBurst, hybridMaxJoinWaitMs: s.hybridMaxJoinWaitMs });
+  controller.setVisual(s.visual);
+  controller.setRules(s.rules);
 }
 
 /** Creates diag log + audio engine + controller and runs the controller while mounted. */
@@ -55,10 +47,7 @@ export function useAtm(storageKey: string): { controller: AtmController; audio: 
   const [audio] = useState(() => new AudioEngine());
   const [controller] = useState(() => new AtmController({ audio, storage: safeLocal(), storageKey, log: diag.add }));
   useEffect(() => {
-    const p = loadPrefs();
-    audio.setVolume(p.volume);
-    audio.setMuted(p.muted);
-    controller.setVisual(loadVisual()); // after mount: no hydration mismatch
+    applySettings(loadSettings(), controller, audio); // after mount: no hydration mismatch
     controller.start();
     return () => controller.stop();
   }, [controller, audio]);

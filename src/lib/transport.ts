@@ -115,6 +115,8 @@ export interface Link {
   /** true if at least one transport accepted the message. */
   send(m: Msg): boolean;
   remoteState(): LinkState;
+  /** true when messages can really leave this device (remote connected, or no remote configured) */
+  ready(): boolean;
   close(): void;
 }
 
@@ -132,6 +134,7 @@ export function createLink(room: string, remote: RemoteConfig | null, hooks: Hoo
   return {
     send: (m) => transports.map((t) => t.send(m)).some(Boolean),
     remoteState: () => remoteT?.state() ?? "disabled",
+    ready: () => (remoteT ? remoteT.state() === "connected" : transports.length > 0),
     close: () => transports.forEach((t) => t.close()),
   };
 }

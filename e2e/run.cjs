@@ -60,7 +60,7 @@ async function mainSuite(browser) {
   check("remote link reported as disabled when env not configured", (await tid(c, "remote-status")).startsWith("disabled"));
   await c.getByRole("button", { name: "Activate Audio" }).click();
   await c.waitForTimeout(1200);
-  check("audio activation → 14/14 samples loaded", /14\/14 loaded/.test(await tid(c, "samples")), await tid(c, "samples"));
+  check("audio activation → all samples loaded", /5\/5 loaded/.test(await tid(c, "samples")), await tid(c, "samples"));
   await c.getByRole("button", { name: "Audio Test" }).click();
   await c.waitForTimeout(600);
   check("audio test plays sequentially (playing state seen)", (await c.locator("main").innerText()).includes("playing "));
@@ -106,7 +106,7 @@ async function mainSuite(browser) {
   for (let i = 0; i < 4; i++) await c.getByRole("button", { name: /Burst/ }).click(); // 24 more
   await c.waitForTimeout(500);
   const waitingBig = await num(c, "waiting");
-  check("stress: 30 queued events, UI still responsive", waitingBig >= 20, "waiting=" + waitingBig);
+  check("stress: 30 queued main-lane events (joins grouped), UI still responsive", waitingBig >= 10, "waiting=" + waitingBig);
   await c.getByRole("button", { name: /Clear waiting/ }).click();
   await c.waitForTimeout(300);
   check("clear waiting queue works", (await num(c, "waiting")) === 0);
@@ -205,7 +205,7 @@ async function mainSuite(browser) {
   await a.getByRole("button", { name: "Activate Audio" }).click();
   await a.waitForTimeout(1500);
   const samples = await tid(a, "samples");
-  check("audio 500 / corrupt file: reported as MISSING/degraded, app alive", /MISSING: cash_dispense/.test(samples) || /1[0-3]\/14/.test(samples), samples);
+  check("audio 500 / corrupt file: reported as MISSING/degraded, app alive", /MISSING: cash_dispense/.test(samples) || /[34]\/5/.test(samples), samples);
   await a.getByRole("button", { name: /^Gift Small/ }).click();
   await waitProcessed(a, 1, 40000);
   check("audio failure does not stop the visual transaction", true);
@@ -216,260 +216,182 @@ async function mainSuite(browser) {
 }
 
 
-async function themeSuite(browser) {
-  console.log("\n== theme suite (3 themes, production build) ==");
+
+async function uiSuite(browser) {
+  console.log("\n== UI suite (ATM only: backdrop, ambient lane, LIVE mode, security, reduced motion) ==");
   const base = `http://127.0.0.1:${PORT_MAIN}`;
   const errors = [];
-  const ign = ["GL Driver Message", "ReadPixels"]; // SwiftShader (software GL) performance chatter, not an app error
-  const ctx = await browser.newContext({ viewport: IPAD });
+  const ctx = await browser.newContext({ viewport: IPAD, permissions: ["clipboard-read", "clipboard-write"] });
   const external = new Set();
   ctx.on("request", (r) => { const u = new URL(r.url()); if (!["127.0.0.1", "localhost"].includes(u.hostname) && u.protocol.startsWith("http")) external.add(u.hostname); });
-  await ctx.addInitScript(() => { // count BroadcastChannel traffic per message type (diagnostics)
-    const Orig = window.BroadcastChannel;
-    const stats = (window.__bc = { rx: {}, tx: {} });
-    window.BroadcastChannel = class extends Orig {
-      constructor(n) { super(n); this.addEventListener("message", (e) => { const t = e.data && e.data.t; stats.rx[t] = (stats.rx[t] || 0) + 1; }); }
-      postMessage(m) { const t = m && m.t; stats.tx[t] = (stats.tx[t] || 0) + 1; return super.postMessage(m); }
-    };
-  });
-  const c = await ctx.newPage();
-  watchErrors(c, "control", errors, ign);
-  await c.goto(`${base}/control`);
-  await c.waitForTimeout(700);
-  const o = await ctx.newPage();
-  await o.setViewportSize({ width: 540, height: 960 });
-  watchErrors(o, "overlay", errors, ign);
-  await o.goto(`${base}/overlay?bg=dark&clean=1&debug=1`);
-  await o.waitForTimeout(900);
-  const hud = async () => {
-    try {
-      return await o.locator("pre").innerText({ timeout: 8000 });
-    } catch (err) {
-      const probe = await Promise.race([
-        o.evaluate(() => JSON.stringify({ url: location.href, ready: document.readyState, bodyLen: document.body.innerText.length, pre: document.querySelectorAll("pre").length, canvases: document.querySelectorAll("canvas").length, text: document.body.innerText.slice(0, 160) })),
-        new Promise((r) => setTimeout(() => r("PAGE UNRESPONSIVE (evaluate hung 5 s)"), 5000)),
-      ]).catch((e) => "evaluate error " + e.message);
-      console.log("DIAG hud failed:", probe, "| errors:", JSON.stringify(errors.slice(0, 3)));
-      try { // where is the main thread? (JS frames if it is running script; none if stuck in a native/GPU call)
-        const cdp = await o.context().newCDPSession(o);
-        await cdp.send("Debugger.enable");
-        const paused = new Promise((r) => cdp.once("Debugger.paused", (e) => r(e.callFrames.slice(0, 8).map((f) => `${f.functionName || "(anon)"} ${f.url.split("/").slice(-2).join("/")}:${f.location.lineNumber}`).join(" <- "))));
-        await cdp.send("Debugger.pause");
-        console.log("DIAG main-thread stack:", await Promise.race([paused, new Promise((r) => setTimeout(() => r("NO JS FRAMES within 6 s (native/GPU stall, not running script)"), 6000))]));
-      } catch (e2) { console.log("DIAG cdp failed", e2.message); }
-      await o.screenshot({ path: path.join(OUT, "diag-hud-failed.png"), timeout: 5000 }).catch(() => {});
-      throw err;
-    }
-  };
-  const waitStandby = async (ms = 90000) => c.waitForFunction(() => document.querySelector("[data-testid=phase]")?.textContent.trim() === "standby" && document.querySelector("[data-testid=waiting]")?.textContent.trim() === "0", null, { timeout: ms });
-  const processed = async () => num(c, "processed");
+  const c = await ctx.newPage(); watchErrors(c, "control", errors);
+  await c.goto(`${base}/control`); await c.waitForTimeout(700);
+  const o = await ctx.newPage(); await o.setViewportSize({ width: 540, height: 960 }); watchErrors(o, "overlay", errors);
+  await o.goto(`${base}/overlay?bg=dark&clean=1&debug=1`); await o.waitForTimeout(900);
   await c.waitForFunction(() => document.querySelector("[data-testid=overlay-status]")?.textContent.includes("connected"), null, { timeout: 15000 });
+  const hudText = () => o.locator("pre").innerText();
+  const stage = o.locator("[data-testid=atm-body]");
+  const diff = async (page, loc) => { const a = await loc.screenshot(); await page.waitForTimeout(1500); const b = await loc.screenshot(); return !a.equals(b); };
 
-  // --- theme selector syncs to overlay ---
-  for (const t of ["reactor", "marble", "atm"]) {
-    await c.getByTestId(`theme-${t}`).click();
-    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
-    const kind = t === "atm" ? await o.getByTestId("atm-body").count() : await o.locator(`[data-testid=three-stage][data-theme=${t}]`).count();
-    check(`theme selector → overlay switches to ${t}`, kind === 1);
-  }
-  // persisted: reload overlay keeps last theme
-  await c.getByTestId("theme-reactor").click();
-  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("theme:reactor"), null, { timeout: 8000 });
-  await o.reload(); await o.waitForTimeout(1200);
-  check("theme persists across overlay reload", (await hud()).includes("theme:reactor"));
-  check("debug monitor is OFF unless ?debug=1", await (async () => { const p = await ctx.newPage(); await p.goto(`${base}/overlay?clean=1`); await p.waitForTimeout(500); const n = await p.locator("pre").count(); await p.close(); return n === 0; })());
+  // readiness is honest: no listener, no Supabase here → never READY
+  check("readiness is not READY with only a simulator and no listener/backend", (await tid(c, "readiness-overall")) !== "READY", await tid(c, "readiness-overall"));
+  check("readiness: TikTok source line is red without a listener", (await c.getByTestId("ready-source").getAttribute("data-level")) === "fail");
+  check("readiness: overlay line is green when the overlay answers", (await c.getByTestId("ready-overlay").getAttribute("data-level")) === "ok");
+  check("readiness: room reported NOT secured before keys exist", (await c.getByTestId("ready-security").getAttribute("data-level")) === "warn");
 
-  // --- idle (attract) animation per theme ---
-  // compare the stage only (the debug HUD text legitimately changes every second)
-  const diff = async (page) => {
-    const el = page.locator("[data-testid=three-stage], [data-testid=atm-body]").first();
-    const a = await el.screenshot(); await page.waitForTimeout(1500); const b = await el.screenshot(); return !a.equals(b);
-  };
-  for (const t of ["atm", "reactor", "marble"]) {
-    await c.getByTestId(`theme-${t}`).click();
-    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
-    await o.waitForTimeout(1200);
-    check(`${t}: idle animation runs by itself (frames differ with no events)`, await diff(o));
-  }
-  // idle disabled → static
+  // ambient lane through the real control→overlay path
+  await c.getByRole("button", { name: /^Comment$/ }).click();
+  await o.waitForSelector("[data-testid=ambient-comment]", { timeout: 10000 });
+  check("comment shows in the overlay ambient lane with the username", /@\w/.test(await o.locator("[data-testid=ambient-comment]").first().innerText()));
+  await c.getByRole("button", { name: /^Follow$/ }).click();
+  await o.waitForSelector("[data-testid=ambient-toast]", { timeout: 10000 });
+  check("follow shows as a toast", /followed/.test(await o.locator("[data-testid=ambient-toast]").innerText()));
+  await c.getByRole("button", { name: /^Likes$/ }).click();
+  await o.waitForSelector("[data-testid=ambient-likes]", { timeout: 15000 });
+  check("likes show as one aggregated pulse", /\+\d+/.test(await o.locator("[data-testid=ambient-likes]").innerText()));
+  await o.waitForFunction(() => !document.querySelector("[data-testid=ambient-comment]") && !document.querySelector("[data-testid=ambient-toast]"), null, { timeout: 20000 });
+  check("ambient items expire on their own and the lane returns to idle", true);
+  // a gift while ambient events are visible: no overlap with the dispenser
+  await c.getByRole("button", { name: /^Gift Medium/ }).click();
+  for (let i = 0; i < 4; i++) await c.getByRole("button", { name: /^Comment$/ }).click();
+  await o.waitForFunction(() => document.querySelectorAll("[data-testid=ambient-comment]").length > 0 && document.querySelectorAll(".note-out").length > 0, null, { timeout: 20000 });
+  const lastComment = o.locator("[data-testid=ambient-comment]").last();
+  const hud = await lastComment.boundingBox(), tray = await o.locator(".note-out").first().boundingBox();
+  check("ambient lane (comments visible) does not overlap the cash dispenser", !!hud && !!tray && hud.y + hud.height < tray.y, `hud bottom=${hud && Math.round(hud.y + hud.height)} notes top=${tray && Math.round(tray.y)}`);
+  await c.waitForFunction(() => document.querySelector("[data-testid=phase]")?.textContent.trim() === "standby", null, { timeout: 40000 });
+  const rx = /rx:(\d+) filt:(\d+)/.exec(await hudText());
+  check("overlay counts every received event (pipeline counters)", !!rx && +rx[1] >= 7, rx ? rx[0] : "none");
+
+  // backdrop: transparent default → night window with rain
+  check("default backdrop is transparent (no canvas)", (await o.locator("[data-testid=backdrop-night]").count()) === 0);
+  await c.getByTestId("backdrop-select").selectOption("night");
+  await o.waitForSelector("[data-testid=backdrop-night]", { timeout: 8000 });
+  await o.waitForTimeout(800);
+  check("night-window backdrop animates (rain / reflections move)", await diff(o, o.locator("[data-testid=backdrop-night]")));
+  await o.screenshot({ path: path.join(OUT, "atm-night-window.png") });
+  await c.getByTestId("backdrop-select").selectOption("transparent");
+
+  // idle: never mechanical (LED pattern is data-driven, ATM idle keeps moving) + can be disabled
+  check("ATM idle animates by itself", await diff(o, stage));
   await c.getByLabel("Idle animation").uncheck();
   await o.waitForTimeout(1500);
-  for (const t of ["reactor", "atm"]) {
-    await c.getByTestId(`theme-${t}`).click();
-    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
-    await o.waitForTimeout(1500);
-    // adaptive quality may legitimately change the picture once right after the switch: accept when two consecutive samples match
-    let still = false;
-    for (let k = 0; k < 3 && !still; k++) still = !(await diff(o));
-    check(`${t}: idle animation can be disabled (static frame)`, still);
-  }
+  let still = false;
+  for (let k = 0; k < 3 && !still; k++) still = !(await diff(o, stage));
+  check("ATM idle can be disabled (static)", still);
   await c.getByLabel("Idle animation").check();
-  await o.waitForTimeout(800);
 
-  // --- welcome shows the real username in every theme ---
-  for (const t of ["atm", "reactor", "marble"]) {
-    await c.getByTestId(`theme-${t}`).click();
-    await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`), t, { timeout: 8000 });
-    const before = await processed();
-    await c.getByRole("button", { name: /^Viewer Join/ }).click();
-    const sel = t === "atm" ? "[data-testid=atm-welcome]" : "[data-testid=hud-welcome]";
-    await o.waitForSelector(sel, { timeout: 15000 });
-    const txt = (await o.locator(sel).first().innerText()).replace(/\n/g, " ");
-    const logName = /@([a-z0-9_.]+)/i.exec(txt);
-    check(`${t}: join shows "Welcome/…, @username" (real name)`, !!logName && /(Welcome|Glad|visitor)/i.test(txt), txt.slice(0, 70));
-    if (t !== "atm") await o.screenshot({ path: path.join(OUT, `theme-${t}-join.png`) });
-    await waitStandby(); 
-    await c.waitForFunction((b) => parseInt(document.querySelector("[data-testid=processed]").textContent, 10) > b, before, { timeout: 30000 });
-  }
+  // prefers-reduced-motion
+  const rctx = await browser.newContext({ viewport: { width: 540, height: 960 }, reducedMotion: "reduce" });
+  const rp = await rctx.newPage();
+  await rp.goto(`${base}/overlay?backdrop=night&clean=1`); await rp.waitForTimeout(1500);
+  const ra = await rp.screenshot(); await rp.waitForTimeout(1500); const rb = await rp.screenshot();
+  check("prefers-reduced-motion: backdrop and ATM idle are still", ra.equals(rb));
+  await rctx.close();
 
-  // --- gift levels visible: ATM note counts per level ---
-  await c.getByTestId("theme-atm").click();
-  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("theme:atm"), null, { timeout: 8000 });
-  const noteCounts = {};
-  for (const [label, key] of [["Gift Small", "small"], ["Gift Medium", "medium"], ["Gift Big", "big"], ["Gift Special", "special"]]) {
-    await c.getByRole("button", { name: new RegExp("^" + label) }).click();
-    await o.waitForFunction(() => document.querySelectorAll(".note-out").length > 0, null, { timeout: 15000 });
-    await o.waitForTimeout(key === "special" ? 3500 : 2800);
-    noteCounts[key] = await o.locator(".note-out").count();
-    if (key === "special") await o.screenshot({ path: path.join(OUT, "atm-special.png") });
-    await waitStandby();
-    await o.waitForTimeout(600);
-  }
-  check("ATM levels: small 3-6 notes, medium 10 notes, big 1 bundle, special 2 bundles", noteCounts.small >= 3 && noteCounts.small <= 6 && noteCounts.medium === 10 && noteCounts.big === 1 && noteCounts.special === 2, JSON.stringify(noteCounts));
+  // security panel + overlay URL carries the PUBLIC key only
+  await c.getByTestId("sec-create").click();
+  await c.waitForFunction(() => document.querySelector("[data-testid=sec-status]")?.textContent.includes("keys created"), null, { timeout: 10000 });
+  await c.getByTestId("copy-overlay").click();
+  const url = await c.evaluate(() => navigator.clipboard.readText());
+  const pk = new URL(url).searchParams.get("pk");
+  check("overlay URL contains the public key (and no private key material)", !!pk && pk.length > 60 && pk.length < 120 && !url.includes("MIGH"), pk ? `pk len ${pk.length}` : "no pk");
 
-  // --- stress on the Reactor: 5 gifts, big during animation, 20 joins, special after the long queue ---
-  await c.getByTestId("theme-reactor").click();
-  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("theme:reactor"), null, { timeout: 8000 });
-  const p0 = await processed();
-  for (let i = 0; i < 5; i++) await c.getByRole("button", { name: /^Gift Small/ }).click();
-  await o.waitForFunction(() => /phase:(processing|dispensing)/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 15000 });
-  await c.getByRole("button", { name: /^Gift Big/ }).click(); // while an animation is running
-  await c.getByRole("button", { name: /Join ×20/ }).click();
-  await c.getByRole("button", { name: /^Gift Special/ }).click();
-  await c.waitForFunction(() => parseInt(document.querySelector("[data-testid=waiting]")?.textContent ?? "0", 10) >= 15, null, { timeout: 8000 }).catch(() => {});
-  const waitingNow = await num(c, "waiting");
-  check("stress: long queue builds (5 gifts + big + 20 joins + special)", waitingNow >= 15, "waiting=" + waitingNow);
-  await waitStandby(180000);
-  await sleep(1500);
-  const p1 = await processed();
-  check("stress: all 27 events processed exactly once, queue empty, nothing dropped", p1 - p0 === 27 && (await num(c, "waiting")) === 0 && (await num(c, "dropped")) === 0, `processed +${p1 - p0}`);
-  const recent = await c.getByTestId("recent-list").innerText();
-  check("recent visitors list is shown in control (max 8)", (recent.match(/@/g) || []).length <= 8 && (recent.match(/@/g) || []).length >= 5);
+  // LIVE autonomous mode hides the simulator and shows read-only counters
+  await c.getByTestId("live-toggle").click();
+  check("LIVE mode hides the simulator buttons", (await c.getByRole("button", { name: /^Gift Big/ }).count()) === 0);
+  check("LIVE mode still shows readiness + counters", (await c.getByTestId("readiness-overall").count()) === 1 && (await c.getByTestId("processed").count()) === 1);
+  await c.getByTestId("live-toggle").click();
 
-  // --- theme switching while a queue is running ---
-  const s0 = await processed();
-  for (let i = 0; i < 3; i++) await c.getByRole("button", { name: /^Gift Medium/ }).click();
-  await o.waitForFunction(() => /phase:(processing|dispensing)/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 15000 });
-  for (const t of ["marble", "atm", "reactor"]) { await c.getByTestId(`theme-${t}`).click(); await sleep(900); }
-  await waitStandby(120000);
-  await sleep(1200);
-  check("theme switching during a queue: every event completes once", (await processed()) - s0 === 3, `processed +${(await processed()) - s0}`);
-
-  // --- cleanup / leak check: cycle themes, one canvas at a time, geometry/texture counts stable, heap bounded ---
-  const heap = async () => o.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize / 1048576 : 0));
-  const counts = async () => { const h = await hud(); const m = /geo:(\d+) tex:(\d+)/.exec(h); return m ? [+m[1], +m[2]] : [0, 0]; };
-  await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(1500);
-  if ((await o.locator("pre").count()) !== 1) {
-    // diagnostic for the overlay going blank
-    console.log("DIAG overlay has no HUD. errors so far:", JSON.stringify(errors.slice(0, 5)), "url:", o.url(), "closed:", o.isClosed());
-    console.log("DIAG body:", (await o.locator("body").innerText().catch((e) => "ERR " + e.message)).slice(0, 300).replace(/\n/g, " | "));
-    await o.screenshot({ path: path.join(OUT, "diag-blank-overlay.png") }).catch(() => {});
-  }
-  const geo0 = (await counts())[0], h0 = await heap();
-  const bc = async (pg) => JSON.stringify(await pg.evaluate(() => window.__bc));
-  console.log("DIAG bc before cycles  control:", await bc(c), " overlay:", await bc(o));
-  for (let i = 0; i < 4; i++) {
-    for (const t of ["marble", "reactor", "atm", "reactor"]) {
-      await c.getByTestId(`theme-${t}`).click();
-      // wait until the new theme is really up (3D: gl:ok + frames; ATM: body present) like a real operator would
-      await o.waitForFunction((t) => document.querySelector("pre")?.textContent.includes(`theme:${t}`) && (t === "atm" ? !!document.querySelector("[data-testid=atm-body]") : /gl:ok/.test(document.querySelector("pre").textContent) && !!document.querySelector("canvas")), t, { timeout: 60000 });
-      await o.waitForTimeout(250);
-    }
-    console.log(`DIAG bc after cycle ${i + 1} control:`, await bc(c).catch(() => "hung"), " overlay:", await Promise.race([bc(o), new Promise((r) => setTimeout(() => r("hung"), 4000))]));
-  }
-  await c.getByTestId("theme-reactor").click(); await o.waitForTimeout(2500);
-  const [geo1] = await counts();
-  const canv = await o.evaluate(() => document.querySelectorAll("canvas").length);
-  const h1 = await heap();
-  check("cleanup: exactly one WebGL canvas after 16 theme switches", canv === 1, "canvases=" + canv);
-  check("cleanup: GPU geometry count does not grow over theme switches", geo1 <= geo0 + 2, `geometries ${geo0} → ${geo1}`);
-  check("cleanup: JS heap growth stays small over 16 theme switches", h1 - h0 < 40, `${h0.toFixed(1)} → ${h1.toFixed(1)} MB`);
-
-  // --- WebGL context loss and restore ---
-  const lost = await o.evaluate(() => !!window.__visual);
-  check("debug hook available (?debug=1)", lost);
-  await o.evaluate(() => window.__visual.loseContext());
-  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("gl:lost"), null, { timeout: 8000 });
-  check("context loss is detected (gl:lost) without page error", true);
-  await o.evaluate(() => window.__visual.restoreContext());
-  await o.waitForFunction(() => document.querySelector("pre")?.textContent.includes("gl:ok"), null, { timeout: 30000 });
-  await o.waitForTimeout(1500);
-  check("context restored: scene rebuilt and animating again", await diff(o));
-  await c.getByRole("button", { name: /^Viewer Join/ }).click();
-  await o.waitForSelector("[data-testid=hud-welcome]", { timeout: 15000 });
-  check("transactions still work after context restore", true);
-  await waitStandby();
-
-  // --- transparency (canvas + page) ---
-  const op = await ctx.newPage();
-  await op.setViewportSize({ width: 540, height: 960 });
-  watchErrors(op, "transparent", errors, ign);
-  await op.goto(`${base}/overlay?clean=1`);
-  await op.waitForTimeout(2500);
-  const png = (await op.screenshot({ omitBackground: true })).toString("base64");
-  const alpha = await (await ctx.newPage()).evaluate(async (b64) => {
-    const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
-    const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
-    const g = cv.getContext("2d"); g.drawImage(img, 0, 0);
-    const a = (x, y) => g.getImageData(x, y, 1, 1).data[3];
-    return { corners: [a(3, 3), a(img.width - 4, 3), a(3, img.height - 4)], centre: a(Math.floor(img.width / 2), Math.floor(img.height * 0.46)), w: img.width };
-  }, png);
-  check("WebGL overlay is transparent at the corners and drawn in the centre (alpha channel)", alpha.corners.some((v) => v === 0) && alpha.centre > 0, JSON.stringify(alpha));
-  await op.close();
-
-  // --- no CDN / third-party host at runtime ---
-  check("no third-party/CDN request in the whole theme suite", external.size === 0, [...external].join(","));
-
-  // --- overlay reload (reconnect) mid-queue: nothing repeated, nothing lost ---
-  await c.getByTestId("theme-reactor").click();
-  await o.waitForTimeout(800);
-  const doneOf = async () => { const m = /done:(\d+)/.exec(await hud()); return m ? +m[1] : 0; };
-  const base0 = await doneOf(); // the overlay HUD counter is cumulative since page load
-  for (let i = 0; i < 4; i++) await c.getByRole("button", { name: /^Gift Small/ }).click();
-  await o.waitForFunction((b) => { const m = /done:(\d+)/.exec(document.querySelector("pre")?.textContent ?? ""); return m && +m[1] >= b + 1; }, base0, { timeout: 60000 });
-  const doneBefore = (await doneOf()) - base0;
-  await o.reload();
-  await o.waitForTimeout(1500);
-  await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 90000 });
-  await o.waitForTimeout(1500);
-  const doneAfter = await doneOf();
-  check("overlay reload mid-queue: pending resume, finished ones not repeated (before+after = 4)", doneBefore + doneAfter === 4, `before=${doneBefore} after=${doneAfter}`);
-
-  check("theme suite: no console errors / page errors / failed requests", errors.length === 0, errors.slice(0, 4).join(" | "));
+  check("ATM fits viewport at 540x960 and no horizontal overflow", await (async () => { const b = await stage.boundingBox(); return !!b && b.x >= 0 && b.y >= 0 && b.x + b.width <= 541 && b.y + b.height <= 961; })());
+  check("no third-party/CDN request in the UI suite", external.size === 0, [...external].join(","));
+  check("UI suite: no console errors / page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
   await ctx.close();
+}
 
-  // --- no WebGL at all → DOM fallback, names still shown ---
-  const nb = await chromium.launch({ args: ["--disable-gpu", "--disable-3d-apis", "--disable-webgl", "--autoplay-policy=no-user-gesture-required"] });
-  try {
-    const nctx = await nb.newContext({ viewport: IPAD });
-    const nerr = [];
-    const nc = await nctx.newPage(); watchErrors(nc, "nowebgl-control", nerr);
-    await nc.goto(`${base}/control`); await nc.waitForTimeout(600);
-    const no = await nctx.newPage(); await no.setViewportSize({ width: 540, height: 960 }); watchErrors(no, "nowebgl-overlay", nerr);
-    await no.goto(`${base}/overlay?clean=1&debug=1`); await no.waitForTimeout(800);
-    for (const t of ["reactor", "marble"]) {
-      await nc.getByTestId(`theme-${t}`).click();
-      await no.waitForSelector("[data-testid=fallback-stage]", { timeout: 10000 });
-      check(`${t}: WebGL unavailable → DOM fallback shown`, (await no.locator("[data-testid=fallback-stage]").getAttribute("data-theme")) === t);
-      await nc.getByRole("button", { name: /^Viewer Join/ }).click();
-      await no.waitForSelector("[data-testid=hud-welcome]", { timeout: 15000 });
-      check(`${t}: fallback still shows the welcome name`, /@/.test(await no.locator("[data-testid=hud-welcome]").innerText()));
-      await nc.waitForFunction(() => document.querySelector("[data-testid=phase]")?.textContent.trim() === "standby", null, { timeout: 30000 });
-    }
-    check("WebGL status reported as unavailable in the debug monitor", (await no.locator("pre").innerText()).includes("gl:unavailable"));
-    check("no-WebGL scenario: no JS errors", nerr.length === 0, nerr.join(" | "));
-    await nctx.close();
-  } finally { await nb.close(); }
+async function autonomySuite(browser, phoenix) {
+  console.log("\n== autonomy suite (NO control page: overlay + SIMULATED listener over the real realtime protocol) ==");
+  const base = `http://127.0.0.1:${PORT_REMOTE}`;
+  const room = "autoRoom" + "abcdefghijklmnopqrstuvwx".slice(0, 16);
+  const errors = [];
+  const keys = JSON.parse(await new Promise((res) => { const p = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/genkeys.ts"]); p.on("close", () => res(p.out.trim().split("\n").pop())); }));
+  const other = JSON.parse(await new Promise((res) => { const p = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/genkeys.ts"]); p.on("close", () => res(p.out.trim().split("\n").pop())); }));
+  const ctx = await browser.newContext({ viewport: { width: 540, height: 960 } });
+  const o = await ctx.newPage();
+  watchErrors(o, "overlay", errors, ["WebSocket", "ERR_CONNECTION", "ws://", "net::"]);
+  const url = `${base}/overlay?room=${room}&clean=1&debug=1&pk=${keys.publicKey}`;
+  await o.goto(url);
+  const hud = () => o.locator("pre").innerText();
+  const num = async (re) => { const m = re.exec(await hud()); return m ? +m[1] : 0; };
+  await o.waitForFunction(() => /remote:connected/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 20000 });
+  check("overlay alone (no dashboard) connects to the realtime backend and enforces signatures", /secured:true/.test(await hud()));
+
+  const L = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/fake-listener.ts", room, phoenix.url, keys.privateKey]);
+  await new Promise((r) => { const t = setInterval(() => { if (L.out.includes('"ready"')) { clearInterval(t); r(); } }, 50); });
+  const cmd = (c) => L.stdin.write(c + "\n");
+  const stats = async () => { const before = L.out.length; cmd("stats"); await new Promise((r) => { const t = setInterval(() => { if (L.out.slice(before).includes('"stats"')) { clearInterval(t); r(); } }, 50); }); return JSON.parse(L.out.slice(before).trim().split("\n").filter((l) => l.includes('"stats"')).pop()).stats; };
+
+  cmd("join:1");
+  await o.waitForSelector("[data-testid=atm-welcome]", { timeout: 20000 });
+  check("viewer join from the listener shows a visible 'Welcome, @username' on the ATM (no button pressed)", /@\w/.test(await o.locator("[data-testid=atm-welcome]").innerText()));
+  cmd("comment:2"); cmd("spam"); cmd("follow"); cmd("like:30"); cmd("share");
+  await o.waitForSelector("[data-testid=ambient-comment]", { timeout: 15000 });
+  check("comment from the listener is displayed automatically", true);
+  await o.waitForFunction(() => /filt:[1-9]/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 15000 });
+  check("spam link comment is filtered by the rules engine", true);
+  cmd("small"); cmd("medium"); cmd("big");
+  await o.waitForFunction(() => document.querySelectorAll(".note-out").length > 0, null, { timeout: 30000 });
+  check("gifts trigger dispenser animations automatically", true);
+  await o.waitForFunction(() => /done:4 /.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 90000 });
+  check("join + small + medium + big processed in order, one at a time (done:4)", true);
+
+  // duplicates, forged and unsigned messages
+  const doneBefore = await num(/done:(\d+)/);
+  cmd("dup"); cmd("dup");
+  await sleep(2500);
+  check("duplicate event (resent twice) is not processed again", (await num(/done:(\d+)/)) === doneBefore);
+  cmd("forge"); await sleep(1500);
+  const bad = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/fake-listener.ts", room, phoenix.url, other.privateKey]);
+  await new Promise((r) => { const t = setInterval(() => { if (bad.out.includes('"ready"')) { clearInterval(t); r(); } }, 50); });
+  bad.stdin.write("special\n");
+  await sleep(3500);
+  check("forged (unsigned) and wrongly-signed events are refused, never shown", (await num(/refused:(\d+)/)) >= 2 && (await num(/done:(\d+)/)) === doneBefore, /refused:\d+/.exec(await hud())?.[0]);
+  try { process.kill(-bad.pid, "SIGKILL"); } catch { /* gone */ }
+  await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
+  check("after the events the overlay returns to idle (standby, empty queue)", true);
+
+  // burst
+  const d0 = await num(/done:(\d+)/), rx0 = await num(/rx:(\d+)/);
+  cmd("burst:200");
+  await o.waitForFunction((n) => { const m = /rx:(\d+)/.exec(document.querySelector("pre")?.textContent ?? ""); return m && +m[1] >= n + 190; }, rx0, { timeout: 60000 });
+  await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 120000 });
+  const st = await stats();
+  check("burst of 200 mixed events: all delivered and acknowledged, overlay stable", st.undelivered === 0 && st.pending === 0, JSON.stringify(st));
+  check("burst: only the 40 joins reached the dispenser lane (grouped), rest handled by the ambient lane", (await num(/done:(\d+)/)) - d0 === 40, `joins processed +${(await num(/done:(\d+)/)) - d0}`);
+
+  // backend outage: gift sent while the realtime server is down arrives once after reconnect
+  const d1 = await num(/done:(\d+)/);
+  phoenix.stdin.write("pause\ndrop\n");
+  await o.waitForFunction(() => !/remote:connected/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 20000 });
+  check("overlay reports the realtime link as down (honest status)", true);
+  cmd("big");
+  await sleep(2500);
+  phoenix.stdin.write("resume\n");
+  await o.waitForFunction(() => /remote:connected/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
+  await o.waitForFunction((n) => { const m = /done:(\d+)/.exec(document.querySelector("pre")?.textContent ?? ""); return m && +m[1] >= n + 1; }, d1, { timeout: 90000 });
+  await sleep(6000);
+  check("reconnect: event sent during the outage is delivered exactly once", (await num(/done:(\d+)/)) === d1 + 1, `done ${d1} → ${await num(/done:(\d+)/)}`);
+
+  // overlay reload (PRISM widget reload) mid-queue, no dashboard anywhere
+  cmd("small:3");
+  await o.waitForFunction(() => /phase:(processing|dispensing)/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 40000 });
+  await o.reload();
+  await o.waitForFunction(() => /remote:connected/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 30000 });
+  await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 120000 });
+  const s2 = await stats();
+  check("overlay reload mid-queue: everything is acknowledged, listener has nothing undelivered", s2.undelivered === 0 && s2.pending === 0, JSON.stringify(s2));
+  check("autonomy suite: no console errors / page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
+  try { process.kill(-L.pid, "SIGKILL"); } catch { /* gone */ }
+  await ctx.close();
 }
 
 async function remoteSuite(browser, phoenix) {
@@ -557,8 +479,8 @@ async function remoteSuite(browser, phoenix) {
   try {
     const only = process.env.E2E_ONLY;
     if (!only || only === "main") await mainSuite(browser);
-    if (!only || only === "theme") await themeSuite(browser);
-    if (only && only !== "remote") return;
+    if (!only || only === "ui") await uiSuite(browser);
+    if (only && only !== "remote" && only !== "autonomy") return;
 
     const phoenix = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "tests/phoenix-cli.ts"]);
     await new Promise((resolve) => { const t = setInterval(() => { if (phoenix.out.includes("{")) { clearInterval(t); resolve(); } }, 50); });
@@ -568,7 +490,8 @@ async function remoteSuite(browser, phoenix) {
     execSync("npx next build", { cwd: ROOT, env, stdio: "ignore" });
     spawnProc("npx", ["next", "start", "-p", String(PORT_REMOTE), "-H", "127.0.0.1"], { env });
     await waitHttp(`http://127.0.0.1:${PORT_REMOTE}/control`);
-    await remoteSuite(browser, phoenix);
+    if (!only || only === "remote") await remoteSuite(browser, phoenix);
+    if (!only || only === "autonomy") await autonomySuite(browser, phoenix);
   } catch (e) {
     console.log("STACK:", String(e && e.stack || e).split("\n").filter((l) => /run\.cjs/.test(l)).slice(0, 4).join(" | "));
     check("E2E runner completed without crashing", false, String(e && e.stack || e).split("\n").slice(0, 3).join(" | "));

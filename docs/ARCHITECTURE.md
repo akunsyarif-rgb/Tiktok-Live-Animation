@@ -1,56 +1,41 @@
-# Architecture
+# Architecture (ATM LIVE, autonomous)
 
 ```
- TikTok LIVE ──(unofficial protocol)──► listener/ (Node, your host) ─┐
-                                                                      │  Supabase Realtime Broadcast
- iPad Safari  /control  ──── simulator events, settings ─────────────┼─ (WebSocket, room = shared secret)
-                                                                      │
- PRISM Live Studio  Web widget  /overlay  ◄───────────────────────────┘
-        │  ack for every event  ──► sender retries until acked
-        └─ AtmController (queue → one transaction at a time) → ATM animation + AudioEngine
+ TikTok LIVE ─(unofficial)─► Source adapter ─► normalize/validate ─► sign ─► Outbox (ack + retry, paced)
+   listener/ (Node ≥22, your host)                                                │ Supabase Realtime Broadcast
+                                                                                  ▼ (room + signed messages)
+ PRISM Web widget  /overlay  ◄── verify signature ◄── ingest (validate, rate-limit)
+        │
+        ├─ dedupe (event id)  ─┬─ main lane: join / gift ► ONE EventQueue (policy: community | gift-priority | hybrid)
+        │                      │                           ► AtmController: one transaction at a time → ATM animation
+        │                      └─ ambient lane: comment / like / follow / share ► RulesEngine ► AmbientDirector (merge, never blocks)
+        └─ idle: night-window backdrop + ATM LEDs/screen, independent of the queue
+ iPad Safari /control  = setup + readiness + diagnostics (NOT needed during LIVE)
 ```
 
-Same-browser shortcut: `/control` and `/overlay` in two tabs also talk over `BroadcastChannel` (no server needed).
+## Pipeline stages and ownership
+| Stage | Code | Job |
+|---|---|---|
+| Source adapter | `listener/sources/*`, `src/lib/source.ts` | produce events; reconnect with exponential backoff + jitter; swappable (`ATM_SOURCE`) |
+| Normalize | `src/lib/tiktok-map.ts`, `events.ts` (`sanitizeEvent`) | one event shape: id, type, username, timestamp, source, validated payload |
+| Transport | `transport.ts`, `outbox.ts`, `sign.ts` | realtime link, at-least-once delivery with acks, message signing |
+| Ingest | `ingest.ts` | validation + token-bucket rate limit (30/s) |
+| Rules | `rules.ts` | pre-LIVE configurable: comment filtering/truncation/rate, like window, follow/share on/off |
+| Director | `controller.ts` (main lane), `director.ts` (ambient lane), `profile.ts`, `dispense.ts` | priority, durations, grouping, anti-collision, return to idle |
+| Renderer | `components/atm/*` | ATM (DOM/SVG/CSS) + night-window canvas backdrop + ambient HUD |
+| Health | `readiness.ts`, `diag.ts` | evidence-based readiness per layer; redacted log |
 
-## Modules (`src/lib`)
+Event record: `id` (idempotency key), `type` (VIEWER_JOIN, GIFT_SMALL/LARGE, COMMENT, FOLLOW, LIKE, SHARE), `username`, `timestamp`, `source` (`tiktok` | `simulator`), payload (`gift`, `text`, `count`). Processing status is observable per event in the diagnostics log (`queued / duplicate ignored / filtered (reason) / shown / start / done`) and as counters (`received`, `filtered`, `duplicates`, `dropped`). There is no `session_id`: the secret **room** scopes a LIVE session.
 
-| Module | Job |
-|---|---|
-| `events.ts` | Event type, simulator generator, **sanitizer** (all untrusted input goes through it) |
-| `queue.ts` | Pure queue: duplicate protection, mode policy (community / gift-priority / hybrid), overflow protection |
-| `controller.ts` | Runs one transaction at a time: processing → dispensing → complete; watchdog; persistence/recovery |
-| `dispense.ts` | Event → banknote plan (1 note / 3–6 notes / bundle of 10) and animation timing |
-| `audio/engine.ts`, `audio/manifest.ts` | Web Audio engine (activation, volume, mute, sequential playback, fallbacks) and asset list |
-| `protocol.ts` | Message schema + validation for everything crossing a link |
-| `transport.ts` | `BroadcastChannel` link + Supabase Realtime link, state reporting, reconnect |
-| `outbox.ts` | At-least-once sending with acks, pacing (free-tier rate limit), expiry |
-| `ingest.ts` | Validation + token-bucket rate limit in front of the controller |
-| `tiktok-map.ts` | TikTok payload → ATM event (pure, unit-tested on sample shapes) |
-| `config.ts` | Env parsing (refuses secret keys), room code rules |
-| `diag.ts` | Redacting ring-buffer log |
+## Response hierarchy (no new backend event types)
+Level from the event: join 0 · gift by diamond value (configurable) 1 small, 2 medium, 3 big, 4 special (a 2nd special inside 60 s is shown as big). Comments/likes/follows/shares are the ambient lane: max 3 comments visible, floods collapse into "+N more", likes become one pulse per window, several follows/shares become one toast. Joins are welcomed by name on the ATM screen; ≥4 waiting joins are welcomed together without dropping any name.
 
-`listener/index.ts` is the optional TikTok process. It reuses `src/lib` and runs on Node ≥ 22 with `--experimental-strip-types`.
-
-## Delivery guarantees
-
-- Sender → overlay is **at-least-once** (outbox resends until `ack`); overlay duplicate protection makes it **effectively once**.
-- Duplicate ids are remembered (last 5000) and survive a reload (localStorage, ≤ 10 min old).
-- A transaction showing "take your cash" is never re-run after a reload; one interrupted earlier is re-run (at-least-once for in-flight work).
-- Watchdog: a transaction stuck > 30 s is aborted, counted as "Watchdog recoveries", and **not** retried (so it can never run twice).
-- Overload: > 100 waiting → oldest waiting **joins** are evicted (counted as "Dropped"); gifts are kept up to a hard cap of 500.
-- Not guaranteed: events sent while **no overlay is open** are dropped after 20 s (join) / 120 s (gift) and logged as undelivered.
+## Delivery and recovery guarantees
+- sender → overlay: at-least-once (outbox resends until ack, expiry 20 s join / 120 s gift) + idempotent overlay = effectively once.
+- queue persisted in `localStorage` (≤10 min); a transaction already showing "take your cash" is not repeated after a reload; watchdog aborts a transaction stuck > 30 s and never retries it.
+- overlay settings (policy, rules, visual, volume) are persisted on the overlay itself: a PRISM widget reload comes back configured **without** the control page.
+- overload: > 100 waiting joins/gifts evicts the oldest *joins* (counted), gifts kept to a hard cap of 500; ambient lane merges.
+- Not guaranteed: events while the overlay is closed expire; the unofficial TikTok source can silently stop (readiness shows last-event age).
 
 ## Queue policy
-
-| Mode | Order |
-|---|---|
-| Community | strict first-come-first-served |
-| Gift Priority | any waiting gift before any waiting join (joins can wait long while gifts keep coming) |
-| Hybrid (default) | gifts first, but a waiting join is guaranteed its turn after **N gifts in a row** (default 3) **or** after waiting **T seconds** (default 30), whichever comes first. N and T are settings in `/control`. Reason: gifts are paying viewers, joins must not starve. |
-
-## Security model
-
-- No API routes, no server secrets in the web app. The only config is the Supabase **anon/publishable** key (public by design) – the app refuses `service_role`/`sb_secret_` keys.
-- The **room code** (24 random chars) is the access control: anyone who has the Supabase URL+anon key **and** the room code can send events to / read status from that room. Treat the overlay URL like a password; rotate with "New room".
-- Every inbound message is validated (version, type, size ≤ 16 kB, field clamps, https-only avatars, safe ids) and rate limited (30 events/s). Text is rendered by React (escaped).
-- Diagnostics are redacted (JWTs, keys, tokens, room codes).
+community = FIFO · gift-priority = gifts first · hybrid (default) = gifts first, a waiting join is guaranteed a turn after N gifts or T seconds (defaults 3 / 30 s).

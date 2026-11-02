@@ -2,6 +2,8 @@ import type { AtmEvent } from "./events.ts";
 import { sanitizeEvent } from "./events.ts";
 import type { QueueMode } from "./queue.ts";
 import { normalizeVisual, type VisualSettings } from "./levels.ts";
+import { DEFAULT_RULES, normalizeRules, type RulesConfig } from "./rules.ts";
+import { DEFAULT_VISUAL } from "./levels.ts";
 import type { AtmSnapshot } from "./controller.ts";
 import type { AudioSnapshot } from "./audio/engine.ts";
 
@@ -16,9 +18,11 @@ export interface Settings {
   muted: boolean;
   /** theme + visual knobs (optional on the wire for older senders → defaults) */
   visual: VisualSettings;
+  /** automatic response rules for comments / likes / follows / shares */
+  rules: RulesConfig;
 }
 
-export type AckResult = "accepted" | "duplicate" | "invalid" | "dropped" | "rate-limited";
+export type AckResult = "accepted" | "duplicate" | "invalid" | "dropped" | "rate-limited" | "filtered";
 
 export type ListenerState = "idle" | "connecting" | "connected" | "reconnecting" | "offline" | "error";
 
@@ -37,9 +41,13 @@ export interface OverlayStatus {
   atm: AtmSnapshot;
   audio: AudioSnapshot;
   autoAudio: boolean;
+  /** messages refused for a missing/forged signature since page load */
+  rejected: number;
+  /** overlay holds the host public key and enforces signatures */
+  secured: boolean;
 }
 
-export type Msg =
+type MsgBody =
   | { v: 1; t: "event"; from: string; event: AtmEvent }
   | { v: 1; t: "ack"; id: string; result: AckResult }
   | { v: 1; t: "settings"; settings: Settings }
@@ -48,9 +56,15 @@ export type Msg =
   | { v: 1; t: "status"; status: OverlayStatus }
   | { v: 1; t: "listener"; status: ListenerStatus };
 
+export type Msg = MsgBody & { sig?: string; ts?: number };
+
 const MODES = ["community", "gift-priority", "hybrid"];
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
+
+export const DEFAULT_SETTINGS: Settings = {
+  mode: "hybrid", hybridGiftBurst: 3, hybridMaxJoinWaitMs: 30_000, volume: 0.8, muted: false, visual: DEFAULT_VISUAL, rules: DEFAULT_RULES,
+};
 
 export function parseSettings(s: unknown): Settings | null {
   if (typeof s !== "object" || s === null) return null;
@@ -64,6 +78,7 @@ export function parseSettings(s: unknown): Settings | null {
     volume: clamp(o.volume, 0, 1),
     muted: o.muted === true,
     visual: normalizeVisual(o.visual),
+    rules: normalizeRules(o.rules),
   };
 }
 
@@ -74,7 +89,7 @@ function parseStatus(s: unknown): OverlayStatus | null {
   if (!a || !au) return null;
   if (typeof a.phase !== "string" || !Array.isArray(a.waiting) || !num(a.waitingTotal) || !num(a.processed)) return null;
   if (typeof au.state !== "string" || !num(au.volume)) return null;
-  return { atm: a as unknown as AtmSnapshot, audio: au as unknown as AudioSnapshot, autoAudio: o.autoAudio === true };
+  return { atm: a as unknown as AtmSnapshot, audio: au as unknown as AudioSnapshot, autoAudio: o.autoAudio === true, rejected: num((o as { rejected?: unknown }).rejected) ? ((o as { rejected: number }).rejected) : 0, secured: (o as { secured?: unknown }).secured === true };
 }
 
 function parseListener(s: unknown): ListenerStatus | null {
@@ -94,7 +109,7 @@ function parseListener(s: unknown): ListenerStatus | null {
 }
 
 /** Validates untrusted input from any transport. Returns null for anything unexpected. */
-export function parseMessage(raw: unknown): Msg | null {
+function parseBody(raw: unknown): MsgBody | null {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
   if (o.v !== PROTOCOL_VERSION) return null;
@@ -109,7 +124,7 @@ export function parseMessage(raw: unknown): Msg | null {
       return event ? { v: 1, t: "event", from: typeof o.from === "string" ? o.from.slice(0, 40) : "?", event } : null;
     }
     case "ack": {
-      const results = ["accepted", "duplicate", "invalid", "dropped", "rate-limited"];
+      const results = ["accepted", "duplicate", "invalid", "dropped", "rate-limited", "filtered"];
       return typeof o.id === "string" && typeof o.result === "string" && results.includes(o.result)
         ? { v: 1, t: "ack", id: o.id.slice(0, 100), result: o.result as AckResult }
         : null;
@@ -133,4 +148,15 @@ export function parseMessage(raw: unknown): Msg | null {
     default:
       return null;
   }
+}
+
+/** Validates untrusted input from any transport. Keeps the optional signature envelope (sig, ts) for the verifier. */
+export function parseMessage(raw: unknown): Msg | null {
+  const body = parseBody(raw);
+  if (!body) return null;
+  const o = raw as Record<string, unknown>;
+  const out: Msg = { ...body };
+  if (typeof o.sig === "string" && o.sig.length <= 200) out.sig = o.sig;
+  if (num(o.ts)) out.ts = o.ts;
+  return out;
 }

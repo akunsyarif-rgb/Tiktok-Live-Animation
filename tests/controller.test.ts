@@ -278,7 +278,6 @@ test("overload: joins evicted, every gift still gets its transaction, counters v
 });
 
 // ---------------- themes, levels, welcome, recent visitors ----------------
-import { MARBLE_MS, REACTOR_MS } from "../src/lib/profile.ts";
 
 const gift = (id: string, diamonds: number, type: "GIFT_SMALL" | "GIFT_LARGE" = "GIFT_SMALL") =>
   mkEvent(type, id, { gift: { name: "G", count: 1, diamonds } });
@@ -411,38 +410,6 @@ test("group welcome survives a reload mid-transaction (folded joins are restored
   c2.stop();
 });
 
-test("theme switching with a queue: active transaction finishes, the next one uses the new theme's timeline, nothing lost", async () => {
-  const T2 = { ...QUICK, animScale: 0.02 };
-  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 1 }).player, timing: T2 });
-  const tl: Record<string, { p: number; theme: string }> = {};
-  c.subscribe(() => { const s = c.getSnapshot(); if (s.current) tl[s.current.id] = { p: s.timeline.processingMs, theme: s.visual.theme }; });
-  c.start();
-  c.enqueue(gift("th1", 120));
-  c.enqueue(gift("th2", 120));
-  await until(() => c.getSnapshot().current?.id === "th1");
-  c.setVisual({ theme: "reactor" }); // switch while th1 is running and th2 is waiting
-  await until(() => c.getSnapshot().processed === 2, 8000);
-  assert.equal(tl.th2!.theme, "reactor");
-  assert.ok(Math.abs(tl.th2!.p - REACTOR_MS[2][0] * 0.02) < 1e-9, "second event uses the reactor level-2 timeline");
-  assert.notEqual(tl.th1!.p, tl.th2!.p);
-  c.setVisual({ theme: "marble" });
-  c.enqueue(gift("th3", 120));
-  await until(() => c.getSnapshot().processed === 3, 8000);
-  assert.ok(Math.abs(tl.th3!.p - MARBLE_MS[2][0] * 0.02) < 1e-9);
-  c.stop();
-});
-
-test("theme switching while idle is instant and does not touch the queue; invalid theme ignored", () => {
-  const c = new AtmController({ visual: NOGROUP, audio: fakeAudio().player, timing: QUICK });
-  c.start();
-  c.setVisual({ theme: "marble" });
-  assert.equal(c.getSnapshot().visual.theme, "marble");
-  c.setVisual({ theme: "nope" as never });
-  assert.equal(c.getSnapshot().visual.theme, "marble");
-  assert.equal(c.getSnapshot().phase, "standby");
-  c.stop();
-});
-
 test("idle animation toggle is a setting only; it never blocks or reorders the queue", async () => {
   const c = new AtmController({ visual: { ...NOGROUP, idleEnabled: false }, audio: fakeAudio({ ms: 1 }).player, timing: QUICK });
   c.start();
@@ -483,7 +450,7 @@ test("REGRESSION: changing settings before start() must not erase the persisted 
   const frozen = memStore();
   store.m.forEach((v, k) => frozen.m.set(k, v));
   const c2 = new AtmController({ visual: NOGROUP, audio: fakeAudio({ ms: 1 }).player, timing: FAST, storage: frozen });
-  c2.setVisual({ theme: "reactor" }); // what the page does on mount, BEFORE start()
+  c2.setVisual({ welcomeMs: 3000 }); // what the page does on mount, BEFORE start()
   c2.start();
   await until(() => c2.getSnapshot().processed === 2, 8000);
   c1.stop();

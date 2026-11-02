@@ -1,5 +1,6 @@
 import type { AtmEvent } from "./events.ts";
 import { safeAvatarUrl } from "./events.ts";
+import { hashSeed } from "./levels.ts";
 
 /**
  * Maps TikTok LIVE payloads (unofficial protocol, via tiktok-live-connector) to ATM events.
@@ -77,4 +78,42 @@ export function mapGift(data: unknown, opts: GiftMapOptions = {}): AtmEvent | nu
     source: "tiktok",
     gift: { name: str(details.giftName) ?? str(d.giftName) ?? `Gift ${giftId}`, count: repeat, diamonds },
   };
+}
+
+const clean = (s: string, max: number) => s.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
+
+/** chat message → COMMENT (text is length-limited again by the rules engine). */
+export function mapComment(data: unknown, now: number = Date.now()): AtmEvent | null {
+  const d = obj(data);
+  const u = userOf(d);
+  const text = clean(str(d.comment) ?? str(d.text) ?? "", 200);
+  if (!u.name || !text) return null;
+  const common = obj(d.common);
+  const msgId = str(d.msgId) ?? str(common.msgId);
+  const id = msgId ? `tt:chat:${msgId}` : `tt:chat:${u.id ?? u.name}:${now}:${hashSeed(text)}`;
+  return { id: id.replace(/[^A-Za-z0-9:_.-]/g, "_").slice(0, 100), type: "COMMENT", username: u.name, avatarUrl: u.avatar, timestamp: now, source: "tiktok", text };
+}
+
+/** A viewer follows (once per user per 10 min bucket → repeated events collapse to one id). */
+export function mapFollow(data: unknown, now: number = Date.now()): AtmEvent | null {
+  const u = userOf(obj(data));
+  if (!u.name) return null;
+  return { id: `tt:follow:${u.id ?? u.name}:${Math.floor(now / 600_000)}`.replace(/[^A-Za-z0-9:_.-]/g, "_").slice(0, 100), type: "FOLLOW", username: u.name, avatarUrl: u.avatar, timestamp: now, source: "tiktok" };
+}
+
+/** Share of the LIVE (same viewer within a minute collapses). */
+export function mapShare(data: unknown, now: number = Date.now()): AtmEvent | null {
+  const u = userOf(obj(data));
+  if (!u.name) return null;
+  return { id: `tt:share:${u.id ?? u.name}:${Math.floor(now / 60_000)}`.replace(/[^A-Za-z0-9:_.-]/g, "_").slice(0, 100), type: "SHARE", username: u.name, avatarUrl: u.avatar, timestamp: now, source: "tiktok" };
+}
+
+/** Likes arrive in floods: the listener sums them and sends one LIKE event per window. */
+export function likeCountOf(data: unknown): number {
+  const d = obj(data);
+  return Math.max(0, Math.floor(num(d.likeCount) ?? num(d.count) ?? 1));
+}
+export function mapLikeBatch(count: number, now: number = Date.now()): AtmEvent | null {
+  if (!(count > 0)) return null;
+  return { id: `tt:like:${now}:${Math.random().toString(36).slice(2, 8)}`, type: "LIKE", username: "viewers", avatarUrl: null, timestamp: now, source: "tiktok", count: Math.min(1_000_000, Math.floor(count)) };
 }

@@ -60,7 +60,7 @@ export class Outbox {
     const e = this.entries.get(id);
     if (!e) return;
     this.entries.delete(id);
-    if (result === "accepted" || result === "duplicate") this.delivered += 1;
+    if (result === "accepted" || result === "duplicate" || result === "filtered") this.delivered += 1;
     else {
       this.undelivered += 1;
       this.o.log("warn", `overlay refused ${id}: ${result}`);

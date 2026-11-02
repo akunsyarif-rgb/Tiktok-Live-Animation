@@ -43,6 +43,7 @@ export interface LinkInfo {
   remote: LinkState;
   remoteReason: string;
   send: (m: Msg) => boolean;
+  canSend: () => boolean;
 }
 
 /** Opens local (BroadcastChannel) + remote (Supabase Broadcast, if configured) links for a room. */
@@ -73,5 +74,6 @@ export function useLink(room: string | null, ready: boolean, diag: DiagLog, onMe
   }, [room, ready, diag]);
 
   const send = useCallback((m: Msg) => linkRef.current?.send(m) ?? false, []);
-  return { room, local: states.local, remote: states.remote, remoteReason: REMOTE.ok ? "" : REMOTE.reason, send };
+  const canSend = useCallback(() => linkRef.current?.ready() ?? false, []);
+  return { room, canSend, local: states.local, remote: states.remote, remoteReason: REMOTE.ok ? "" : REMOTE.reason, send };
 }

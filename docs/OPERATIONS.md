@@ -7,6 +7,8 @@
 - [ ] `/control` shows **Overlay page: connected**. If not: see Troubleshooting.
 - [ ] Audio: Activate Audio on `/control`; press **Audio Test**; confirm you hear it **in the broadcast preview / a test LIVE**, not just from the iPad speaker. iPad silent switch OFF. Volume ≥ 60 %, Mute OFF.
 - [ ] Send one of each: Viewer Join, Gift Small, Gift Large → animation + sound + counters OK (Processed increases, Watchdog 0, Dropped 0).
+- [ ] Signing keys created, overlay URL contains `pk=`, listener has `ATM_SIGNING_KEY` (/control → Security shows "overlay enforcing ✓").
+- [ ] Readiness = READY (or DEGRADED only for "streamer not LIVE yet"). Then press **Enter LIVE mode** and leave /control alone.
 - [ ] Mode chosen (Hybrid recommended; see ARCHITECTURE queue policy).
 - [ ] TikTok listener (if used) running on its host; `/control` shows **connected @yourname**. It may say `offline` until you are LIVE — that is normal.
 - [ ] iPad: charger connected, Auto-Lock off, Do Not Disturb on (calls interrupt audio), no other app using the microphone/audio.

@@ -1,19 +1,10 @@
 import type { AtmEvent } from "./events.ts";
 
-export type ThemeId = "atm" | "reactor" | "marble";
-export const THEMES: { id: ThemeId; label: string }[] = [
-  { id: "atm", label: "ATM Machine" },
-  { id: "reactor", label: "Energy Reactor" },
-  { id: "marble", label: "Kinetic Marble Machine" },
-];
-export const isThemeId = (v: unknown): v is ThemeId => v === "atm" || v === "reactor" || v === "marble";
-
 /** 0 join · 1 small · 2 medium · 3 big · 4 special */
 export type GiftLevel = 0 | 1 | 2 | 3 | 4;
 export const LEVEL_LABEL: Record<GiftLevel, string> = { 0: "Viewer Join", 1: "Small Gift", 2: "Medium Gift", 3: "Big Gift", 4: "Special Gift" };
 
 export interface VisualSettings {
-  theme: ThemeId;
   /** idle / attract animation on or off (off = static pose, no idle motion, no render loop while waiting) */
   idleEnabled: boolean;
   /** minimum total time a welcome (viewer join) stays on screen */
@@ -22,8 +13,8 @@ export interface VisualSettings {
   giftMediumDiamonds: number;
   giftBigDiamonds: number;
   giftSpecialDiamonds: number;
-  /** 0.5 – 1.5 scales particle counts, glow and motion amplitude (not timing) */
-  intensity: number;
+  /** scene behind the ATM: transparent (default, for camera overlay) or the night-window room */
+  backdrop: "transparent" | "night";
   showRecent: boolean;
   /** a second Special within this window is shown as Big (keeps the grand effect rare) */
   specialCooldownMs: number;
@@ -32,13 +23,12 @@ export interface VisualSettings {
 }
 
 export const DEFAULT_VISUAL: VisualSettings = {
-  theme: "atm",
   idleEnabled: true,
   welcomeMs: 4000,
   giftMediumDiamonds: 30,
   giftBigDiamonds: 1000,
   giftSpecialDiamonds: 10000,
-  intensity: 1,
+  backdrop: "transparent",
   showRecent: true,
   specialCooldownMs: 60_000,
   groupWelcomeAt: 4,
@@ -54,13 +44,12 @@ export function normalizeVisual(raw: unknown, base: VisualSettings = DEFAULT_VIS
   const big = Math.round(clampN(o.giftBigDiamonds, medium + 1, 1e8, Math.max(base.giftBigDiamonds, medium + 1)));
   const special = Math.round(clampN(o.giftSpecialDiamonds, big + 1, 1e9, Math.max(base.giftSpecialDiamonds, big + 1)));
   return {
-    theme: isThemeId(o.theme) ? o.theme : base.theme,
     idleEnabled: typeof o.idleEnabled === "boolean" ? o.idleEnabled : base.idleEnabled,
     welcomeMs: Math.round(clampN(o.welcomeMs, 2000, 12000, base.welcomeMs)),
     giftMediumDiamonds: medium,
     giftBigDiamonds: big,
     giftSpecialDiamonds: special,
-    intensity: clampN(o.intensity, 0.5, 1.5, base.intensity),
+    backdrop: o.backdrop === "night" ? "night" : o.backdrop === "transparent" ? "transparent" : base.backdrop,
     showRecent: typeof o.showRecent === "boolean" ? o.showRecent : base.showRecent,
     specialCooldownMs: Math.round(clampN(o.specialCooldownMs, 0, 3_600_000, base.specialCooldownMs)),
     groupWelcomeAt: Math.round(clampN(o.groupWelcomeAt, 2, 50, base.groupWelcomeAt)),
