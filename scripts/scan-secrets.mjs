@@ -14,7 +14,7 @@ const files = [];
 })(".next/static"); // build output
 for (const r of ["public"]) if (existsSync(r)) (function w(d) { for (const e of readdirSync(d, { withFileTypes: true })) { const f = join(d, e.name); if (e.isDirectory()) w(f); else if (!/\.wav$/.test(e.name)) files.push(f); } })(r);
 if (existsSync(".next/server/app")) (function w(d) { for (const e of readdirSync(d, { withFileTypes: true })) { const f = join(d, e.name); if (e.isDirectory()) w(f); else if (/\.(html|rsc|json)$/.test(e.name)) files.push(f); } })(".next/server/app");
-const tracked = execSync("git ls-files", { encoding: "utf8" }).split("\n").filter((f) => f && !/(^|\/)(package-lock\.json|\.env\.example)$|\.wav$|^tests\/|^e2e\//.test(f));
+const tracked = execSync("git ls-files", { encoding: "utf8" }).split("\n").filter((f) => f && !/(^|\/)(package-lock\.json|\.env\.example)$|\.wav$|^scripts\/scan-secrets\.mjs$|^tests\/|^e2e\//.test(f));
 
 const b64u = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 const findings = [];
