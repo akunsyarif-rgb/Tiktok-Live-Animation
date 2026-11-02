@@ -362,7 +362,7 @@ export function ControlClient() {
 
           <Panel title="Diagnostics">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-              <dt className="text-white/60">Audio (this page)</dt><dd>{localAudio.state}{localAudio.muted ? " · muted" : ""}</dd>
+              <dt className="text-white/60">Audio (this page)</dt><dd>{localAudio.state}{localAudio.muted ? " · muted" : ""}{audioActive && localAudio.playing ? ` · playing ${localAudio.playing}` : ""}</dd>
               <dt className="text-white/60">Samples</dt><dd data-testid="samples">{audioActive ? `${loaded}/${SOUND_IDS.length} loaded${missing.length ? ` · MISSING: ${missing.join(", ")}` : ""}` : "not loaded (activate audio)"}</dd>
               <dt className="text-white/60">Event source</dt><dd>{listenerSeen && listener?.status.state === "connected" ? "TikTok listener (unofficial)" : "none live (simulator only)"}</dd>
             </dl>
