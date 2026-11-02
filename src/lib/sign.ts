@@ -55,8 +55,12 @@ type Signable = Record<string, unknown> & { sig?: string };
 export const SIGNED_TYPES = ["event", "settings", "clear"] as const;
 export const needsSignature = (t: unknown): boolean => (SIGNED_TYPES as readonly unknown[]).includes(t);
 
+let lastTs = 0;
+
 export async function signMessage<T extends Signable>(msg: T, key: CryptoKey, now: number = Date.now()): Promise<T & { ts: number; sig: string }> {
-  const body = { ...msg, ts: now };
+  // strictly increasing per process: lets the verifier reject any replay of an older control message
+  lastTs = Math.max(now, lastTs + 1);
+  const body = { ...msg, ts: lastTs };
   delete (body as Signable).sig;
   const sig = await subtle().sign(SIG, key, new TextEncoder().encode(stableStringify(body)));
   return { ...body, sig: b64u(sig) } as T & { ts: number; sig: string };

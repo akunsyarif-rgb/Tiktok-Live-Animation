@@ -289,12 +289,53 @@ async function uiSuite(browser) {
   await rctx.close();
 
   // security panel + overlay URL carries the PUBLIC key only
+  c.on("dialog", (d) => void d.accept()); // confirm() on rotate / remove
   await c.getByTestId("sec-create").click();
-  await c.waitForFunction(() => document.querySelector("[data-testid=sec-status]")?.textContent.includes("keys created"), null, { timeout: 10000 });
+  await c.waitForFunction(() => document.querySelector("[data-testid=sec-status]")?.textContent.includes("keys active"), null, { timeout: 10000 });
   await c.getByTestId("copy-overlay").click();
   const url = await c.evaluate(() => navigator.clipboard.readText());
   const pk = new URL(url).searchParams.get("pk");
   check("overlay URL contains the public key (and no private key material)", !!pk && pk.length > 60 && pk.length < 120 && !url.includes("MIGH"), pk ? `pk len ${pk.length}` : "no pk");
+  check("private key is shown ONCE in a reveal box", (await c.getByTestId("sec-reveal").count()) === 1);
+  const lsDump = await c.evaluate(() => JSON.stringify({ ...localStorage }));
+  check("localStorage holds NO private key material (no PKCS#8, no legacy key record)", !lsDump.includes("MIGHAgEAMBMGByqGSM49") && !lsDump.includes("atm:sign:v1"));
+  const idbInfo = await c.evaluate(() => new Promise((res) => { const r = indexedDB.open("atm-keys", 1); r.onsuccess = () => { const g = r.result.transaction("k").objectStore("k").get("host"); g.onsuccess = () => res({ has: !!g.result, extractable: g.result?.signKey?.extractable, type: g.result?.signKey?.type }); }; r.onerror = () => res({ has: false }); }));
+  check("signing key lives in IndexedDB as a NON-extractable CryptoKey", idbInfo.has && idbInfo.extractable === false && idbInfo.type === "private", JSON.stringify(idbInfo));
+  await c.getByTestId("sec-dismiss").click();
+  check("after dismissing, the private key bytes are gone from the page", (await c.locator("body").innerText()).indexOf("MIGH") === -1 && (await c.getByTestId("sec-reveal").count()) === 0);
+  await c.reload(); await c.waitForTimeout(800);
+  await c.waitForFunction(() => document.querySelector("[data-testid=sec-status]")?.textContent.includes("keys active"), null, { timeout: 10000 });
+  check("keys survive a reload but the secret reveal does not come back", (await c.getByTestId("sec-reveal").count()) === 0);
+  await c.getByTestId("sec-create").click(); // rotate
+  await c.waitForFunction(() => document.querySelector("[data-testid=sec-reveal]"), null, { timeout: 10000 });
+  await c.getByTestId("copy-overlay").click();
+  const pk2 = new URL(await c.evaluate(() => navigator.clipboard.readText())).searchParams.get("pk");
+  check("key rotation yields a new public key (old overlay URL becomes invalid)", !!pk2 && pk2 !== pk);
+  // legacy migration: an old plaintext key in localStorage is moved into the non-extractable store and deleted
+  const legacy = await c.evaluate(async () => {
+    const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const b = (a) => btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const rec = { publicKey: b(await crypto.subtle.exportKey("raw", kp.publicKey)), privateKey: b(await crypto.subtle.exportKey("pkcs8", kp.privateKey)) };
+    localStorage.setItem("atm:sign:v1", JSON.stringify(rec));
+    return rec.publicKey;
+  });
+  await c.reload(); await c.waitForTimeout(1200);
+  await c.getByTestId("copy-overlay").click();
+  const pk3 = new URL(await c.evaluate(() => navigator.clipboard.readText())).searchParams.get("pk");
+  check("legacy plaintext key is migrated into the non-extractable store and deleted from localStorage", pk3 === legacy && (await c.evaluate(() => localStorage.getItem("atm:sign:v1"))) === null);
+  await c.getByTestId("sec-remove").click();
+  await c.waitForFunction(() => document.querySelector("[data-testid=sec-status]")?.textContent.includes("NOT secured"), null, { timeout: 10000 });
+  check("keys can be removed (revocation on the host side)", true);
+
+  // device-check page (what you open inside PRISM)
+  const pc = await ctx.newPage(); watchErrors(pc, "prism-check", errors);
+  await pc.goto(`${base}/prism-check`); await pc.waitForTimeout(2500);
+  const pr = await pc.locator("[data-testid=prism-rows] li").evaluateAll((els) => els.map((e) => [e.textContent.slice(0, 60), e.getAttribute("data-level")]));
+  const lv = (needle) => (pr.find(([t]) => t.includes(needle)) || [])[1];
+  check("PRISM check page: WebCrypto ECDSA, non-extractable key, IndexedDB CryptoKey, localStorage, canvas all PASS in Chromium", ["WebCrypto ECDSA", "non-extractable", "IndexedDB", "localStorage", "Canvas 2D"].every((n) => lv(n) === "pass"), JSON.stringify(pr.map(([t, l]) => `${t.slice(0, 18)}:${l}`)));
+  await pc.close();
+  const hdr = (await ctx.request.get(`${base}/overlay`)).headers();
+  check("Content-Security-Policy is set (object-src none, connect-src limited)", /object-src 'none'/.test(hdr["content-security-policy"] ?? "") && /connect-src 'self'/.test(hdr["content-security-policy"] ?? ""), (hdr["content-security-policy"] ?? "none").slice(0, 90));
 
   // LIVE autonomous mode hides the simulator and shows read-only counters
   await c.getByTestId("live-toggle").click();
@@ -319,6 +360,8 @@ async function autonomySuite(browser, phoenix) {
   const o = await ctx.newPage();
   watchErrors(o, "overlay", errors, ["WebSocket", "ERR_CONNECTION", "ws://", "net::"]);
   const url = `${base}/overlay?room=${room}&clean=1&debug=1&pk=${keys.publicKey}`;
+  let dialogs = 0;
+  o.on("dialog", (d) => { dialogs++; void d.dismiss(); });
   await o.goto(url);
   const hud = () => o.locator("pre").innerText();
   const num = async (re) => { const m = re.exec(await hud()); return m ? +m[1] : 0; };
@@ -359,6 +402,23 @@ async function autonomySuite(browser, phoenix) {
   await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
   check("after the events the overlay returns to idle (standby, empty queue)", true);
 
+  // XSS: markup in username / comment / avatar fields (validly signed) must stay inert text
+  cmd("xss");
+  await o.waitForSelector("[data-testid=ambient-comment]", { timeout: 20000 });
+  await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
+  const xss = await o.evaluate(() => ({ flag: window.__xss, imgs: document.querySelectorAll('img[src="x"]').length, scripts: document.querySelectorAll("script").length, svg: document.querySelectorAll("svg[onload]").length, text: document.body.innerText.includes("<img src=x") || document.body.innerText.includes("<script>") }));
+  check("XSS: markup in username/comment/avatar is shown as text, never executed or injected", xss.flag === undefined && xss.imgs === 0 && xss.svg === 0 && dialogs === 0, JSON.stringify(xss));
+
+  // unsigned / replayed CONTROL-PLANE messages (settings, clear)
+  const ref0 = await num(/refused:(\d+)/);
+  cmd("forge-settings");
+  await sleep(2000);
+  check("unsigned 'settings' (mute + night backdrop + idle off) is refused and changes nothing", (await num(/refused:(\d+)/)) === ref0 + 1 && (await o.locator("[data-testid=backdrop-night]").count()) === 0 && !/audio:\S+ muted/.test(await hud()));
+  cmd("clear"); await sleep(1500);
+  check("a validly signed 'clear' is accepted", (await num(/refused:(\d+)/)) === ref0 + 1);
+  cmd("replay-clear"); await sleep(1500);
+  check("the SAME signed 'clear' re-sent (replay) is refused", (await num(/refused:(\d+)/)) === ref0 + 2, /refused:\d+/.exec(await hud())?.[0]);
+
   // burst
   const d0 = await num(/done:(\d+)/), rx0 = await num(/rx:(\d+)/);
   cmd("burst:200");
@@ -389,6 +449,32 @@ async function autonomySuite(browser, phoenix) {
   await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 120000 });
   const s2 = await stats();
   check("overlay reload mid-queue: everything is acknowledged, listener has nothing undelivered", s2.undelivered === 0 && s2.pending === 0, JSON.stringify(s2));
+  // the REAL listener process (replay source = rehearsal, not a real LIVE) end-to-end with signing
+  const hp = 18700 + Math.floor(Math.random() * 200);
+  const renv = { ...process.env, ATM_SOURCE: "replay", ATM_REPLAY_FILE: "listener/sample-replay.jsonl", SUPABASE_URL: phoenix.url, SUPABASE_ANON_KEY: "x".repeat(30), ATM_ROOM: room, ATM_SIGNING_KEY: keys.privateKey, ATM_HEALTH_PORT: String(hp) };
+  const doneB = await num(/done:(\d+)/);
+  const RL = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "listener/index.ts"], { env: renv });
+  await o.waitForSelector("text=rehearsal_viewer_1", { timeout: 40000 });
+  check("REAL listener process (replay source, signed): its events reach the overlay and are verified", true);
+  const hres = await (await fetch(`http://127.0.0.1:${hp}/health`)).json();
+  check("listener health endpoint: ok, signed, link ready, no secret in the payload", hres.ok === true && hres.signed === true && hres.link.ready === true && !JSON.stringify(hres).includes(keys.privateKey) && !JSON.stringify(hres).includes(room), JSON.stringify({ ok: hres.ok, state: hres.state, sent: hres.sent }));
+  await o.waitForFunction((n) => { const m = /done:(\d+)/.exec(document.querySelector("pre")?.textContent ?? ""); return m && +m[1] >= n + 2; }, doneB, { timeout: 60000 });
+  check("replay rehearsal drives join + gifts automatically through the real listener", true);
+  const exit = new Promise((r) => RL.on("exit", (code) => r(code)));
+  process.kill(-RL.pid, "SIGTERM");
+  const code = await Promise.race([exit, sleep(9000).then(() => "timeout")]);
+  check("graceful shutdown on SIGTERM: exits 0 after flushing, logs the shutdown", code === 0 && /shutting down/.test(RL.out), `exit=${code}`);
+  check("listener output never contains the signing key, room code or anon key", !RL.out.includes(keys.privateKey) && !RL.out.includes(room) && !RL.out.includes("x".repeat(30)));
+  const CK = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "listener/index.ts", "--check"], { env: { ...renv, ATM_HEALTH_PORT: "" } });
+  const ckCode = await Promise.race([new Promise((r) => CK.on("exit", (c) => r(c))), sleep(30000).then(() => "timeout")]);
+  check("listener --check: config valid and realtime link connects (exit 0)", ckCode === 0 && /realtime link: connected/.test(CK.out), `exit=${ckCode}`);
+  // supervisor contract: a dead realtime link makes the process exit non-zero so systemd/Docker restarts it
+  const SL = spawnProc("node", ["--experimental-strip-types", "--no-warnings", "listener/index.ts"], { env: { ...renv, ATM_HEALTH_PORT: "", ATM_LINK_STALL_MS: "6000" } });
+  await sleep(4000);
+  phoenix.stdin.write("pause\ndrop\n");
+  const slCode = await Promise.race([new Promise((r) => SL.on("exit", (c) => r(c))), sleep(45000).then(() => "timeout")]);
+  phoenix.stdin.write("resume\n");
+  check("link stall watchdog: listener exits with code 2 when the realtime link stays down (supervisor restarts it)", slCode === 2, `exit=${slCode}`);
   check("autonomy suite: no console errors / page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
   try { process.kill(-L.pid, "SIGKILL"); } catch { /* gone */ }
   await ctx.close();

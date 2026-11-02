@@ -14,3 +14,11 @@ Branch `work/atm-live-autonomous` (new). **Decision:** remote `work/three-theme-
 
 ## Pending external validation
 Real iPad Safari · PRISM (transparency, WebCrypto, audio capture) · real Supabase · real TikTok LIVE · Vercel Preview of this branch (see BUILD_VERIFICATION.md for the live status)
+
+## Final preview validation pass (security / runtime / listener host / PRISM)
+- [x] Private key: non-extractable CryptoKey in IndexedDB, shown once, legacy migration, rotation/removal UI
+- [x] Replay guard for settings/clear, CSP, avatar referrer policy, ping throttle, secret scanner (`npm run security:scan`)
+- [x] Listener: health endpoint, `--check`, link-stall exit, graceful flush, crash handlers, replay rehearsal file, systemd unit, `docs/LISTENER_HOST.md`
+- [x] `/prism-check` probe page, `docs/PRISM.md`, audio routing checklist
+- [x] Vercel (read-only): Preview READY; Vercel Authentication ON (blocks PRISM); no env vars set; Preview URL could not be opened from here
+- [ ] Real Supabase / real TikTok / PRISM / iPad: waiting for you (RELEASE_READINESS.md)

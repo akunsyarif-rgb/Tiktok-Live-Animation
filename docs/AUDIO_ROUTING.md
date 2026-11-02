@@ -19,3 +19,14 @@ The ATM LIVE app only makes its own dispenser sounds (optional). It never plays,
 - Verify with a private/unlisted test LIVE and listen on a second device before going public.
 - **Music rights:** music you may play privately is not automatically licensed for public LIVE. Use licensed/royalty-free music or TikTok's own sound library as allowed by its terms.
 - Mute/volume in /control affect only the ATM sounds.
+
+## Checklist before a LIVE (tick only what you actually did on the devices)
+- [ ] Decide the music source device: ______ ; the voice source: ______ ; the device PRISM runs on: ______.
+- [ ] If music is on an **iPhone** and PRISM on an **iPad**: how does it get into PRISM? (cable/interface / speaker→mic / other) ______. Bluetooth from the iPhone to the iPad is **not** an audio-capture path. Do not assume it arrives.
+- [ ] PRISM audio meters move for music **and** mic **while the LIVE preview is on**.
+- [ ] Start a **private/unlisted** test LIVE; listen on a **third device** (not the iPad): music audible, voice audible, balanced; no echo/feedback.
+- [ ] Open the ATM overlay in PRISM: do ATM sounds appear in the meters? (optional; if not, ignore: visuals do not need them).
+- [ ] Trigger 5 gifts quickly: music/mic do not stutter (the event engine does not use the audio path).
+- [ ] Music licence: the track may be played on a public LIVE (royalty-free / licensed / platform library). Private-listening rights are not enough.
+- [ ] Notifications/Siri/calls off (they interrupt iOS audio).
+Result log (date, devices, what you heard): ______

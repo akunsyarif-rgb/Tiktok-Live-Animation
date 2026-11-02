@@ -1,0 +1,6 @@
+{"delayMs":1500,"event":{"type":"VIEWER_JOIN","username":"rehearsal_viewer_1"}}
+{"delayMs":2500,"event":{"type":"COMMENT","username":"rehearsal_ani","text":"halo dari latihan!"}}
+{"delayMs":3000,"event":{"type":"GIFT_SMALL","username":"rehearsal_budi","gift":{"name":"Rose","count":3,"diamonds":3}}}
+{"delayMs":3000,"event":{"type":"LIKE","username":"viewers","count":25}}
+{"delayMs":4000,"event":{"type":"GIFT_LARGE","username":"rehearsal_citra","gift":{"name":"Lion","count":1,"diamonds":2500}}}
+{"delayMs":6000,"event":{"type":"FOLLOW","username":"rehearsal_dewi"}}

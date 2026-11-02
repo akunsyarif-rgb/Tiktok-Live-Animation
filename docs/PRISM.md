@@ -1,26 +1,45 @@
-# PRISM Live Studio (iPad)
+# PRISM Live Studio (iPad): what must be verified on the device
 
-> **PENDING EXTERNAL VALIDATION.** Nothing below was verified inside PRISM: the author has no iPad/PRISM/LIVE access. Items marked ☐ must be checked by you (see `MANUAL_TESTS.md`).
+> **Nothing here was verified inside PRISM.** The agent has no iPad/PRISM. Use the built-in probe page, then the stream preview.
 
-## Why a server link is needed
-PRISM's Web widget and Safari are different processes/contexts: they do **not** share `localStorage`, `BroadcastChannel` or sessions. The only dependable path is a network link. This app uses Supabase Realtime Broadcast (free tier) with a secret **room code**.
+## Why a server link
+PRISM's Web widget and Safari are different processes: no shared `localStorage`, IndexedDB or `BroadcastChannel`. Cross-device control needs the realtime backend (Supabase Broadcast + signed messages). The overlay is autonomous after it has its URL: it keeps its settings and replay-guard state in its own storage.
 
-Emulated test (automated): two fully isolated browser contexts (separate storage, no `BroadcastChannel`) exchanged events, acks, settings and survived a dropped connection through the realtime link (against a local server speaking the same wire protocol). Real Supabase and real PRISM remain untested.
+## Step 0 — make the Preview reachable by PRISM (manual: needs your Vercel account)
+Current project state (read from Vercel, not changed): **Vercel Authentication is ON for all deployments except custom domains**, and **no environment variables exist** yet. Consequences: a `*.vercel.app` Preview URL asks for a Vercel login (PRISM cannot log in), and the build has no `NEXT_PUBLIC_SUPABASE_*` so the cross-device link is disabled.
+Do, without disabling protection globally:
+1. Supabase: create/choose a **dedicated** project; copy *Project URL* and the **anon/publishable** key (never `service_role`).
+2. Vercel → Project → Settings → Environment Variables: add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for **Preview** (branch `work/atm-live-autonomous`). Redeploy (they are inlined at build time).
+3. Reachability for PRISM, pick one:
+   - **(recommended)** attach a **custom domain** you own to this branch (Project → Settings → Domains → Git branch `work/atm-live-autonomous`). Custom domains are exempt from the current protection mode, other Previews stay protected. Cost: a domain.
+   - or Deployment Protection → *Shareable link* / *Protection Bypass*: the share token is appended to the URL and a cookie is set; whether the PRISM web view keeps that cookie is **unknown**: test it with `/prism-check`.
+   - or create a separate Production-like project for the LIVE (your decision; Production must not be changed for tests).
+4. Do not use older deployment URLs: each deployment URL is a snapshot of one commit; use the branch alias of the newest Preview.
 
-## Setup
-1. Deploy to Vercel with the two `NEXT_PUBLIC_SUPABASE_*` variables (`DEPLOYMENT_VERCEL.md`).
-2. Open `/control` in Safari. **Connections → Room code → Copy overlay URL** (`…/overlay?room=…&clean=1`).
-3. PRISM → add source **Web** (widget) → paste the overlay URL → portrait 9:16 canvas, transparent. ☐ confirm background is transparent.
-4. Back in `/control`: "Overlay page: connected" must turn on within ~5 s. ☐
-5. Press **Gift Large** → ATM must animate in PRISM. ☐
+## Step 1 — probe the web view
+Add a Web source in PRISM with `https://<host>/prism-check?room=<your room>` (9:16). Read the rows on the stream preview:
+| Row | Needs PASS because |
+|---|---|
+| Secure context | WebCrypto/IndexedDB require https |
+| WebCrypto ECDSA P-256 sign + verify | signature verification of every event; if FAIL the overlay refuses all control messages |
+| Imported private key non-extractable | host key hygiene (only relevant on the control browser) |
+| IndexedDB stores a CryptoKey | host key persistence (control browser) |
+| localStorage | overlay remembers settings/replay guard across reloads |
+| Canvas 2D | night-window backdrop (transparent mode does not need it) |
+| Realtime link to your Supabase | WebSocket works in the widget; cross-device link |
+Transparency squares and 9:16: judge by eye on the **stream** (dashed square must show the scene behind it). "Copy report" gives a redacted text report. Also open the same page in iPad Safari for comparison.
 
-## Audio (the hard part)
-Viewers only hear the stream audio PRISM captures. Open questions you must test:
-- ☐ Does PRISM include web-widget audio in the broadcast (not only the iPad speaker)?
-- ☐ Can WebAudio start without a tap in the widget? The overlay tries automatically (`autoActivate`); if blocked it shows a "TAP: ENABLE SOUND" button (hidden by `?clean=1` — remove `clean=1` for the first test, or add `&debug=1` to see `audio:` state).
-- ☐ iPad silent switch / ringer: Web Audio is muted by it.
+## Step 2 — overlay in PRISM
+`https://<host>/overlay?room=<room>&pk=<host public key>&clean=1` (first run add `&debug=1`: HUD shows `remote:`, `secured:`, `refused:`, counters). Required: background transparent (no black box), ATM fully inside the 9:16 canvas, `remote:connected`, `secured:true`. Then trigger a test from `/control` (simulator, clearly labelled TEST) in Safari and watch the widget react: this is the cross-context test.
 
-If PRISM does not capture widget audio, code cannot fix it. Alternatives you can test: (a) route the iPad's own audio into the stream if your PRISM version has "device audio / media sound" capture; (b) play the sounds as media files from PRISM's own sound/media source (the WAVs are in `public/audio/`), triggered manually; (c) stream from a desktop with OBS browser source (audio capture is reliable there).
+## Audio
+ATM sound inside the widget may not be captured by PRISM; music and microphone are external by design (see AUDIO_ROUTING.md). The overlay never needs audio.
 
-## If the widget stays blank / does not link
-Append `&debug=1` to the overlay URL: the HUD shows `local:` / `remote:` link state, room prefix, audio state and the last log lines. Typical causes: env vars missing at build, wrong room code, Vercel Authentication wall, PRISM blocks WebSockets.
+## If something fails
+| Failure | Do |
+|---|---|
+| login page instead of overlay | Step 0.3 |
+| overlay loads, `remote:` not connected | env vars missing at build / wrong room / WebSocket blocked (probe says which) |
+| `secured:false` | `pk` missing in the PRISM URL |
+| `refused:` rises | listener/control signed with another key (rotate) or host clock > 10 min off |
+| black background | use `?backdrop=transparent` (default) and check PRISM source settings; fallback is a chroma colour behind the widget |

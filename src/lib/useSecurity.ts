@@ -1,29 +1,38 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateSigningKeys, importPrivate, importPublic, needsSignature, signMessage, type KeyPairB64 } from "./sign.ts";
+import { generateSigningKeys, importPrivate, importPublic, needsSignature, signMessage } from "./sign.ts";
+import { clearKeys, loadKeys, saveKeys } from "./keystore.ts";
 import type { Msg } from "./protocol.ts";
 
-const SK = "atm:sign:v1"; // control: {publicKey, privateKey}   (private key never leaves this browser except by explicit copy to the listener)
+const SK_LEGACY = "atm:sign:v1"; // old format: PKCS#8 in localStorage (readable by any script): migrated away on first load
 const PK = "atm:pk:v1"; // overlay: host public key
 
 const ls = (): Storage | undefined => {
   try { return window.localStorage; } catch { return undefined; }
 };
 
-export function readControlKeys(): KeyPairB64 | null {
-  try {
-    const k = JSON.parse(ls()?.getItem(SK) ?? "null") as KeyPairB64 | null;
-    return k && typeof k.publicKey === "string" && typeof k.privateKey === "string" ? k : null;
-  } catch { return null; }
-}
-export async function createControlKeys(): Promise<KeyPairB64> {
+/** Creates a new host key pair. Returns the PRIVATE key bytes ONCE (for the listener); only a non-extractable key is stored. */
+export async function createControlKeys(): Promise<{ publicKey: string; listenerKey: string; persisted: boolean }> {
   const k = await generateSigningKeys();
-  try { ls()?.setItem(SK, JSON.stringify(k)); } catch { /* not persisted */ }
-  return k;
+  const signKey = await importPrivate(k.privateKey); // extractable:false
+  const persisted = await saveKeys({ publicKey: k.publicKey, signKey });
+  return { publicKey: k.publicKey, listenerKey: k.privateKey, persisted };
 }
-export function clearControlKeys(): void {
-  try { ls()?.removeItem(SK); } catch { /* ignore */ }
+export async function clearControlKeys(): Promise<void> {
+  await clearKeys();
+  try { ls()?.removeItem(SK_LEGACY); } catch { /* ignore */ }
+}
+
+/** One-time migration of a legacy localStorage key into the non-extractable store; the plaintext copy is deleted. */
+async function migrateLegacy(): Promise<void> {
+  try {
+    const raw = ls()?.getItem(SK_LEGACY);
+    if (!raw) return;
+    const k = JSON.parse(raw) as { publicKey?: string; privateKey?: string };
+    if (k.publicKey && k.privateKey) await saveKeys({ publicKey: k.publicKey, signKey: await importPrivate(k.privateKey) });
+    ls()?.removeItem(SK_LEGACY);
+  } catch { try { ls()?.removeItem(SK_LEGACY); } catch { /* ignore */ } }
 }
 
 /** Overlay: public key from ?pk= (then remembered) or from the last visit. */
@@ -35,14 +44,16 @@ export function resolvePublicKey(): string | null {
   return fromUrl ?? ok(ls()?.getItem(PK) ?? null);
 }
 
-/** Control: signing key (CryptoKey) derived from the stored private key. */
+/** Control: non-extractable signing key + public key from the key store. */
 export function useSigner(version: number): { signKey: CryptoKey | null; publicKey: string | null } {
   const [state, setState] = useState<{ signKey: CryptoKey | null; publicKey: string | null }>({ signKey: null, publicKey: null });
   useEffect(() => {
     let cancelled = false;
-    const k = readControlKeys();
-    if (!k) { setState({ signKey: null, publicKey: null }); return; } // eslint-disable-line react-hooks/set-state-in-effect -- browser-only storage
-    importPrivate(k.privateKey).then((signKey) => { if (!cancelled) setState({ signKey, publicKey: k.publicKey }); }).catch(() => { if (!cancelled) setState({ signKey: null, publicKey: null }); });
+    void (async () => {
+      await migrateLegacy();
+      const k = await loadKeys();
+      if (!cancelled) setState(k ? { signKey: k.signKey, publicKey: k.publicKey } : { signKey: null, publicKey: null });
+    })();
     return () => { cancelled = true; };
   }, [version]);
   return state;

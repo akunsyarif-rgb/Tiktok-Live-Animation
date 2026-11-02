@@ -5,13 +5,15 @@ import { createLink } from "../src/lib/transport.ts";
 import { Outbox } from "../src/lib/outbox.ts";
 import { importPrivate, needsSignature, signMessage } from "../src/lib/sign.ts";
 import { createSimEvent, type AtmEvent, type SimKind } from "../src/lib/events.ts";
-import type { Msg } from "../src/lib/protocol.ts";
+import { DEFAULT_SETTINGS, type Msg } from "../src/lib/protocol.ts";
+import { DEFAULT_VISUAL } from "../src/lib/levels.ts";
 
 const [room, url, keyArg = "none"] = process.argv.slice(2) as [string, string, string?];
 const key = keyArg && keyArg !== "none" && keyArg !== "forge" ? await importPrivate(keyArg) : null;
 let sent = 0;
 let lastAt: number | null = null;
 let last: AtmEvent | null = null;
+let savedClear: Msg | null = null;
 
 const link = createLink(room, { url, key: "x".repeat(30) }, {
   onState: () => undefined,
@@ -45,6 +47,14 @@ process.stdin.on("data", (d: string) => {
     else if (cmd === "dup" && last) outbox.submit({ ...last });
     else if (cmd === "forge") link.send({ v: 1, t: "event", from: "attacker", event: createSimEvent("special") }); // unsigned, bypasses signing
     else if (cmd === "stats") console.log(JSON.stringify({ stats: { sent, delivered: outbox.delivered, undelivered: outbox.undelivered, pending: outbox.pending } }));
+    else if (cmd === "xss") {
+      // markup in every user-controlled field, signed like a real event: must be displayed as inert text
+      submit({ ...createSimEvent("comment"), username: "<img src=x onerror=window.__xss=1>", text: "<script>window.__xss=2</script><img src=x onerror=window.__xss=3>", avatarUrl: "javascript:window.__xss=4" });
+      submit({ ...createSimEvent("join"), username: '"><svg onload=window.__xss=5>', avatarUrl: "data:text/html,<script>window.__xss=6</script>" });
+    }
+    else if (cmd === "forge-settings") link.send({ v: 1, t: "settings", settings: { ...DEFAULT_SETTINGS, muted: true, visual: { ...DEFAULT_VISUAL, backdrop: "night", idleEnabled: false } } }); // unsigned
+    else if (cmd === "clear" && key) void signMessage({ v: 1, t: "clear" } as never, key).then((m) => { savedClear = m as Msg; link.send(m as Msg); });
+    else if (cmd === "replay-clear" && savedClear) link.send(savedClear); // byte-identical re-send of a valid signed message
     else if (cmd === "quit") process.exit(0);
   }
 });

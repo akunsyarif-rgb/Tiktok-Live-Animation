@@ -5,6 +5,7 @@ import { AmbientDirector } from "../src/lib/director.ts";
 import { evaluateReadiness, type ReadinessInput } from "../src/lib/readiness.ts";
 import { generateSigningKeys, importPrivate, importPublic, signMessage, verifyMessage, stableStringify, MAX_SKEW_MS } from "../src/lib/sign.ts";
 import { sanitizeEvent } from "../src/lib/events.ts";
+import { ReplayGuard } from "../src/lib/replay.ts";
 import { parseMessage } from "../src/lib/protocol.ts";
 import { likeCountOf, mapComment, mapFollow, mapLikeBatch, mapShare } from "../src/lib/tiktok-map.ts";
 import { AtmController } from "../src/lib/controller.ts";
@@ -210,4 +211,64 @@ test("sleepAbortable returns immediately when aborted", async () => {
   setTimeout(() => ac.abort(), 20);
   await sleepAbortable(5000, ac.signal);
   assert.ok(Date.now() - t0 < 500);
+});
+
+// ---------------- replay protection / key rotation ----------------
+test("replay guard: a control message is accepted once; same or older timestamps are refused", () => {
+  const g = new ReplayGuard();
+  assert.equal(g.accept("clear", 1000), true);
+  assert.equal(g.accept("clear", 1000), false, "byte-identical replay");
+  assert.equal(g.accept("clear", 900), false, "older message re-sent");
+  assert.equal(g.accept("clear", 1001), true);
+  assert.equal(g.accept("settings", 1000), true, "types are independent");
+  assert.equal(g.accept("settings", Number.NaN), false);
+  const g2 = new ReplayGuard(g.snapshot()); // survives a reload
+  assert.equal(g2.accept("clear", 1001), false);
+});
+
+test("signMessage timestamps strictly increase even inside one millisecond (so legitimate rapid updates are never mistaken for replays)", async () => {
+  const k = await generateSigningKeys();
+  const priv = await importPrivate(k.privateKey);
+  const a = await signMessage({ v: 1, t: "clear" }, priv, 5_000_000), b = await signMessage({ v: 1, t: "clear" }, priv, 5_000_000);
+  assert.ok(b.ts > a.ts);
+});
+
+test("key rotation: messages signed by the old key are refused once the overlay holds the new public key", async () => {
+  const oldK = await generateSigningKeys(), newK = await generateSigningKeys();
+  const msg = await signMessage({ v: 1, t: "settings", settings: {} } as never, await importPrivate(oldK.privateKey));
+  assert.equal(await verifyMessage(msg, await importPublic(oldK.publicKey)), "ok");
+  assert.equal(await verifyMessage(msg, await importPublic(newK.publicKey)), "bad-signature");
+});
+
+test("a private key imported for signing is NOT extractable (scripts cannot read its bytes)", async () => {
+  const k = await generateSigningKeys();
+  const priv = await importPrivate(k.privateKey);
+  assert.equal(priv.extractable, false);
+  await assert.rejects(() => crypto.subtle.exportKey("pkcs8", priv));
+});
+
+test("every control-plane type requires a signature; informational types do not", async () => {
+  const { needsSignature } = await import("../src/lib/sign.ts");
+  for (const t of ["event", "settings", "clear"]) assert.equal(needsSignature(t), true, t);
+  for (const t of ["ack", "status", "ping", "listener"]) assert.equal(needsSignature(t), false, t);
+});
+
+test("outbox sends the canonical (sanitized) event so signatures verify after receiver-side parsing", async () => {
+  const { Outbox } = await import("../src/lib/outbox.ts");
+  const { createSimEvent } = await import("../src/lib/events.ts");
+  const { parseMessage } = await import("../src/lib/protocol.ts");
+  const { generateSigningKeys, importPrivate, importPublic, signMessage, verifyMessage } = await import("../src/lib/sign.ts");
+  const k = await generateSigningKeys();
+  const priv = await importPrivate(k.privateKey);
+  const pub = await importPublic(k.publicKey);
+  const sent: unknown[] = [];
+  const ob = new Outbox({ from: "t", paceMs: 0, send: (m) => { sent.push(m); return true; } });
+  ob.submit({ ...createSimEvent("join"), username: "<b>x</b>", avatarUrl: "javascript:alert(1)" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(sent.length, 1);
+  const wire = JSON.parse(JSON.stringify(await signMessage(sent[0] as never, priv)));
+  const parsed = parseMessage(wire);
+  assert.ok(parsed);
+  assert.equal(await verifyMessage(parsed as never, pub), "ok");
+  ob.stop();
 });

@@ -9,7 +9,7 @@ export const Avatar = memo(function Avatar({ url, name, size }: { url: string | 
     <div style={{ width: size, height: size, borderRadius: size / 2, overflow: "hidden", background: "#1d4d30", border: "2px solid #3fd16e", flex: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
       {show ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" width={size} height={size} onError={() => setFailedUrl(url)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <img src={url} alt="" referrerPolicy="no-referrer" decoding="async" width={size} height={size} onError={() => setFailedUrl(url)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       ) : (
         <span className="screen-text" style={{ fontSize: size * 0.4, fontWeight: 700 }}>{initials}</span>
       )}

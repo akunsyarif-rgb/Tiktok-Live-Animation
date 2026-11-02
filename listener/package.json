@@ -3,7 +3,10 @@
   "private": true,
   "type": "module",
   "description": "Optional TikTok LIVE listener (unofficial). Runs on a Node host you control, NOT on Vercel.",
-  "scripts": { "start": "node --experimental-strip-types index.ts" },
+  "scripts": {
+    "start": "node --experimental-strip-types index.ts",
+    "check": "node --experimental-strip-types --no-warnings index.ts --check"
+  },
   "dependencies": {
     "tiktok-live-connector": "2.5.0"
   }

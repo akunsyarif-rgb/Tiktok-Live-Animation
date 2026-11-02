@@ -1,4 +1,4 @@
-import type { AtmEvent } from "./events.ts";
+import { sanitizeEvent, type AtmEvent } from "./events.ts";
 import type { AckResult, Msg } from "./protocol.ts";
 
 export interface OutboxOptions {
@@ -49,7 +49,13 @@ export class Outbox {
     return this.entries.size;
   }
 
-  submit(ev: AtmEvent): void {
+  submit(raw: AtmEvent): void {
+    // Send the canonical form: the receiver verifies the signature over the sanitized event, so the sender must sign that same form.
+    const ev = sanitizeEvent(raw);
+    if (!ev) {
+      this.o.log("warn", "event not sent: invalid");
+      return;
+    }
     if (this.entries.has(ev.id)) return;
     const now = this.o.now();
     this.entries.set(ev.id, { ev, firstAt: now, nextAt: now, tries: 0 });

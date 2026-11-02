@@ -1,0 +1,37 @@
+# systemd unit for the ATM LIVE listener. NOT executed in the build environment (no systemd there): review before use.
+# Install:  sudo cp deploy/atm-listener.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now atm-listener
+[Unit]
+Description=ATM LIVE listener (TikTok source -> signed events -> realtime backend)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+Type=simple
+User=atm
+Group=atm
+WorkingDirectory=/opt/atm-live
+# secrets live ONLY here (chmod 600, owner root): never in the unit, the repo or the shell history
+EnvironmentFile=/etc/atm-listener.env
+ExecStart=/usr/bin/node --experimental-strip-types --no-warnings listener/index.ts
+# exit codes: 1 crash, 2 realtime link down too long -> always restart with a fresh process
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+# hardening (the process only needs outbound HTTPS/WSS)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadOnlyPaths=/opt/atm-live
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

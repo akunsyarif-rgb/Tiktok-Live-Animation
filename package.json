@@ -12,7 +12,9 @@
     "lint": "eslint .",
     "e2e": "node e2e/run.cjs",
     "listener": "npm --prefix listener start",
-    "verify": "npm run typecheck && npm run lint && npm test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build && npm run security:scan",
+    "security:scan": "node scripts/scan-secrets.mjs",
+    "listener:check": "npm --prefix listener run check"
   },
   "dependencies": {
     "@supabase/realtime-js": "^2.118.0",

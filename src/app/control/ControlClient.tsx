@@ -13,7 +13,7 @@ import { evaluateReadiness } from "../../lib/readiness.ts";
 import { SOUND_IDS } from "../../lib/audio/manifest.ts";
 import { applySettings, loadSettings, saveSettings, useAtm } from "../../lib/useAtm.ts";
 import { REMOTE, resolveRoom, saveRoom, useLink } from "../../lib/useLink.ts";
-import { clearControlKeys, createControlKeys, readControlKeys, useSignedSend, useSigner } from "../../lib/useSecurity.ts";
+import { clearControlKeys, createControlKeys, useSignedSend, useSigner } from "../../lib/useSecurity.ts";
 
 const MODES: { id: QueueMode; label: string }[] = [
   { id: "community", label: "Community" },
@@ -72,6 +72,8 @@ export function ControlClient() {
   const [showRoom, setShowRoom] = useState(false);
   const [roomInput, setRoomInput] = useState("");
   const [keyVersion, setKeyVersion] = useState(0);
+  /** private key bytes: kept ONLY in this state, shown once, never stored */
+  const [revealed, setRevealed] = useState<{ key: string; persisted: boolean } | null>(null);
   const [blocklistText, setBlocklistText] = useState("");
   const [overlay, setOverlay] = useState<{ status: OverlayStatus; seenAt: number } | null>(null);
   const [listener, setListener] = useState<{ status: ListenerStatus; seenAt: number } | null>(null);
@@ -215,14 +217,28 @@ export function ControlClient() {
 
           {!live && (<>
             <Panel title="Security (signed messages)">
-              <p className="mb-2 text-xs text-white/60">Without keys, anyone who knows the room code can inject events. With keys, the overlay accepts only messages signed by you (ECDSA P-256). The overlay needs the PUBLIC key (inside its URL); the PRIVATE key stays here and in the listener&apos;s environment.</p>
+              <p className="mb-2 text-xs text-white/60">Without keys, anyone who knows the room code can inject events. With keys the overlay accepts only messages signed by you (ECDSA P-256). The overlay gets the PUBLIC key in its URL. The private key is stored here as a non-extractable key (scripts cannot read it); its bytes are shown <b>once</b> at creation so you can put them in the listener&apos;s environment.</p>
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span data-testid="sec-status">{publicKey ? (ovStatus?.secured ? "keys created · overlay enforcing ✓" : "keys created · overlay NOT using the new URL yet") : "no keys: room is NOT secured"}</span>
-                {!publicKey ? <button className={small} data-testid="sec-create" onClick={async () => { await createControlKeys(); setKeyVersion((v) => v + 1); addLog("signing keys created: copy the NEW overlay URL and the listener key"); }}>Create signing keys</button> : (<>
-                  <button className={small} onClick={() => { const k = readControlKeys(); if (k) void copy("listener key copied (SECRET: paste into the listener env as ATM_SIGNING_KEY, never share)", k.privateKey); }}>Copy listener key (secret)</button>
-                  <button className={small} onClick={() => { clearControlKeys(); setKeyVersion((v) => v + 1); }}>Remove keys</button>
-                </>)}
+                <span data-testid="sec-status">{publicKey ? (ovStatus?.secured ? "keys active · overlay enforcing ✓" : "keys active · overlay NOT using the new URL yet") : "no keys: room is NOT secured"}</span>
+                <button className={small} data-testid="sec-create" onClick={async () => {
+                  if (publicKey && !window.confirm("Rotate keys? The old overlay URL and the listener key stop working until you update both.")) return;
+                  const k = await createControlKeys();
+                  setRevealed({ key: k.listenerKey, persisted: k.persisted });
+                  setKeyVersion((v) => v + 1);
+                  addLog(k.persisted ? "signing keys created: copy the NEW overlay URL and the listener key (shown once)" : "signing keys created but NOT persisted (private mode): they vanish when this tab closes");
+                }}>{publicKey ? "Rotate keys" : "Create signing keys"}</button>
+                {publicKey && <button className={small} data-testid="sec-remove" onClick={async () => { if (!window.confirm("Remove the keys? The overlay will refuse everything signed by them.")) return; await clearControlKeys(); setRevealed(null); setKeyVersion((v) => v + 1); }}>Remove keys</button>}
               </div>
+              {revealed && (
+                <div className="mt-3 rounded border border-yellow-500/50 bg-yellow-500/10 p-3 text-xs" data-testid="sec-reveal">
+                  <b>Listener key — SECRET, shown once.</b> Put it in the listener env as <code>ATM_SIGNING_KEY</code>. Anyone with it can forge events. It cannot be shown again; lost = rotate.
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button className={small} onClick={() => void copy("listener key copied (SECRET)", revealed.key)}>Copy listener key</button>
+                    <button className={small} data-testid="sec-dismiss" onClick={() => setRevealed(null)}>I stored it, hide now</button>
+                  </div>
+                  {!revealed.persisted && <div className="mt-2 text-red-300">Browser storage unavailable: the signing key lives only in this tab.</div>}
+                </div>
+              )}
             </Panel>
 
             <Panel title="Automatic response rules">
