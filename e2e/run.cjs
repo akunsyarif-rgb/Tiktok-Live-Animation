@@ -403,8 +403,10 @@ async function autonomySuite(browser, phoenix) {
   check("after the events the overlay returns to idle (standby, empty queue)", true);
 
   // XSS: markup in username / comment / avatar fields (validly signed) must stay inert text
+  const doneX = await num(/done:(\d+)/);
   cmd("xss");
   await o.waitForSelector("[data-testid=ambient-comment]", { timeout: 20000 });
+  await o.waitForFunction((n) => { const m = /done:(\d+)/.exec(document.querySelector("pre")?.textContent ?? ""); return m && +m[1] >= n + 1; }, doneX, { timeout: 60000 }); // the XSS join is processed too
   await o.waitForFunction(() => /phase:standby wait:0/.test(document.querySelector("pre")?.textContent ?? ""), null, { timeout: 60000 });
   const xss = await o.evaluate(() => ({ flag: window.__xss, imgs: document.querySelectorAll('img[src="x"]').length, scripts: document.querySelectorAll("script").length, svg: document.querySelectorAll("svg[onload]").length, text: document.body.innerText.includes("<img src=x") || document.body.innerText.includes("<script>") }));
   check("XSS: markup in username/comment/avatar is shown as text, never executed or injected", xss.flag === undefined && xss.imgs === 0 && xss.svg === 0 && dialogs === 0, JSON.stringify(xss));

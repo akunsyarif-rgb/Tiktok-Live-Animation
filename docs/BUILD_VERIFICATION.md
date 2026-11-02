@@ -31,3 +31,10 @@ Date 2026-11-02 · Node 22.22 · Next 16.4.3 · React 19.3.1 · TypeScript 5.9 s
 
 ## Deployment
 Vercel Preview for this branch built and reached **READY** (target = preview, not production); build log lists `/control` and `/overlay` as static. The Preview URL could **not** be opened from this environment (outside the sandbox allow-list; the Vercel fetch tool had no access): runtime of the Preview is UNVERIFIED. A Production deployment for branch `work/three-theme-preview` (commit `d6c1b92`) exists and was **not** created by this work.
+
+## Final preview validation pass
+
+- `npm run typecheck`, `npm run lint`: clean. `npm test`: 90/90. `npm run build` + `npm run security:scan`: pass.
+- E2E (Chromium, local, production build): full run 102/103, the one failure was a test-side race (XSS join still processing when the burst baseline was read); fixed in the test. Autonomy suite re-run: 26/26. Main/ui/remote suites passed in the same full run.
+- Bug found by the new XSS E2E check and fixed at root cause: the receiver verifies signatures over the sanitized event, so senders must sign the canonical form. `Outbox.submit` now sanitizes first (regression unit test added). It failed closed (events refused), not exploitable.
+- Not verified: hosted Supabase, real TikTok, PRISM, iPad/Safari, real audio, systemd unit. See `RELEASE_READINESS.md`.
